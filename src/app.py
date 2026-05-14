@@ -116,10 +116,20 @@ archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra
 
 if archivo_subido is not None:
     try:
-        # --- 1. LECTURA Y LIMPIEZA XRD (¡AQUÍ ESTÁ LA CORRECCIÓN DEL ERROR!) ---
+        # --- 1. LECTURA Y LIMPIEZA BLINDADA XRD ---
         df_xrd = pd.read_excel(archivo_subido, sheet_name='XRD diferentes tiempos')
-        for col in df_xrd.columns:
-            df_xrd[col] = pd.to_numeric(df_xrd[col], errors='coerce')
+        
+        # Forzar nombres únicos por posición matemática
+        cols_xrd = list(df_xrd.columns)
+        if len(cols_xrd) >= 4:
+            cols_xrd[0] = 'Angulo 2tetha'
+            cols_xrd[1] = 'HDL 0H'
+            cols_xrd[2] = 'Angulo 2tetha.1'
+            cols_xrd[3] = 'HDL 96H'
+        df_xrd.columns = cols_xrd
+        
+        # apply limpia toda la tabla de golpe, evadiendo el TypeError
+        df_xrd = df_xrd.apply(pd.to_numeric, errors='coerce')
             
         mask_0h = (df_xrd['Angulo 2tetha'] >= limite_inf) & (df_xrd['Angulo 2tetha'] <= limite_sup)
         x_0h = df_xrd.loc[mask_0h, 'Angulo 2tetha'].values
@@ -145,12 +155,18 @@ if archivo_subido is not None:
         fwhm_0h = calcular_fwhm(x_0h, y_0h, idx_0h)
         fwhm_96h = calcular_fwhm(x_96h, y_96h, idx_96h)
 
-        # --- 2. LECTURA CINÉTICA ---
+        # --- 2. LECTURA BLINDADA CINÉTICA ---
         df_cin = pd.read_excel(archivo_subido, sheet_name='Cinetica', skiprows=1)
-        df_cin = df_cin.rename(columns={df_cin.columns[0]: 'Tiempo', df_cin.columns[1]: 'GSH', df_cin.columns[2]: 'NAC'})
-        for col in ['Tiempo', 'GSH', 'NAC']:
-            df_cin[col] = pd.to_numeric(df_cin[col], errors='coerce')
-        df_cin = df_cin.dropna()
+        
+        cols_cin = list(df_cin.columns)
+        if len(cols_cin) >= 3:
+            cols_cin[0] = 'Tiempo'
+            cols_cin[1] = 'GSH'
+            cols_cin[2] = 'NAC'
+        df_cin.columns = cols_cin
+        
+        df_cin = df_cin.apply(pd.to_numeric, errors='coerce')
+        df_cin = df_cin.dropna(subset=['Tiempo', 'GSH', 'NAC'])
 
         horas_objetivo = np.array([0, 24, 48, 72, 96])
         minutos_objetivo = horas_objetivo * 60
