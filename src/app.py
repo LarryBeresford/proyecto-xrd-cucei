@@ -116,20 +116,16 @@ archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra
 
 if archivo_subido is not None:
     try:
-        # --- 1. LECTURA Y LIMPIEZA BLINDADA XRD ---
+        # --- 1. LECTURA Y RECORTE ESTRICTO XRD ---
         df_xrd = pd.read_excel(archivo_subido, sheet_name='XRD diferentes tiempos')
         
-        # Forzar nombres únicos por posición matemática
-        cols_xrd = list(df_xrd.columns)
-        if len(cols_xrd) >= 4:
-            cols_xrd[0] = 'Angulo 2tetha'
-            cols_xrd[1] = 'HDL 0H'
-            cols_xrd[2] = 'Angulo 2tetha.1'
-            cols_xrd[3] = 'HDL 96H'
-        df_xrd.columns = cols_xrd
+        # Recortar obligatoriamente a las primeras 4 columnas (evita el error multidimensional)
+        df_xrd = df_xrd.iloc[:, :4].copy()
+        df_xrd.columns = ['Angulo 2tetha', 'HDL 0H', 'Angulo 2tetha.1', 'HDL 96H']
         
-        # apply limpia toda la tabla de golpe, evadiendo el TypeError
+        # Limpiar datos no numéricos
         df_xrd = df_xrd.apply(pd.to_numeric, errors='coerce')
+        df_xrd = df_xrd.dropna(how='all') # Quitar filas 100% vacías
             
         mask_0h = (df_xrd['Angulo 2tetha'] >= limite_inf) & (df_xrd['Angulo 2tetha'] <= limite_sup)
         x_0h = df_xrd.loc[mask_0h, 'Angulo 2tetha'].values
@@ -155,15 +151,12 @@ if archivo_subido is not None:
         fwhm_0h = calcular_fwhm(x_0h, y_0h, idx_0h)
         fwhm_96h = calcular_fwhm(x_96h, y_96h, idx_96h)
 
-        # --- 2. LECTURA BLINDADA CINÉTICA ---
+        # --- 2. LECTURA Y RECORTE ESTRICTO CINÉTICA ---
         df_cin = pd.read_excel(archivo_subido, sheet_name='Cinetica', skiprows=1)
         
-        cols_cin = list(df_cin.columns)
-        if len(cols_cin) >= 3:
-            cols_cin[0] = 'Tiempo'
-            cols_cin[1] = 'GSH'
-            cols_cin[2] = 'NAC'
-        df_cin.columns = cols_cin
+        # Recortar obligatoriamente a las primeras 3 columnas
+        df_cin = df_cin.iloc[:, :3].copy()
+        df_cin.columns = ['Tiempo', 'GSH', 'NAC']
         
         df_cin = df_cin.apply(pd.to_numeric, errors='coerce')
         df_cin = df_cin.dropna(subset=['Tiempo', 'GSH', 'NAC'])
