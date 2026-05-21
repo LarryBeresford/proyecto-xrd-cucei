@@ -193,14 +193,14 @@ if archivo_subido is not None:
         pdf_bytes = generar_pdf(stats_dict, cin_dict)
         st.sidebar.markdown("---")
         st.sidebar.download_button(
-            label="📥 Descargar Reporte Ejecutivo (PDF)",
+            label="Descargar Reporte (PDF)",
             data=pdf_bytes,
             file_name=f"Reporte_CUCEI_{datetime.now().strftime('%Y%m%d')}.pdf",
             mime="application/pdf"
         )
 
         # --- 5. INTERFAZ VISUAL ---
-        t1, t2, t3, t4 = st.tabs(["Cristalografía (XRD)", "⏱️ Cinética de Liberación", "Correlación Estadística", "Datos Crudos"])
+        t1, t2, t3, t4 = st.tabs(["Cristalografía (XRD)", "Cinética de Liberación", "Correlación Estadística", "Datos Crudos"])
 
         with t1:
             st.markdown("### Métricas Estructurales del Vehículo (HDL)")
