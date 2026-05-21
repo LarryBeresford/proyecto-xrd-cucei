@@ -18,7 +18,7 @@ def calcular_distancia_bragg(angulo_2theta, longitud_onda=1.5406):
     return d
 
 def normalizar_senal(y):
-    if np.max(y) == np.min(y):
+    if len(y) == 0 or np.max(y) == np.min(y):
         return y
     return (y - np.min(y)) / (np.max(y) - np.min(y))
 
@@ -108,32 +108,42 @@ st.markdown("---")
 
 # BARRA LATERAL
 st.sidebar.header("⚙️ Parámetros de XRD")
-limite_inf = st.sidebar.slider("Límite Inferior (Ángulo 2θ)", 5.0, 12.0, 8.0, 0.1)
-limite_sup = st.sidebar.slider("Límite Superior (Ángulo 2θ)", 12.0, 20.0, 15.0, 0.1)
+limite_inf = st.sidebar.slider("Límite Inferior (Ángulo 2θ)", 2.0, 25.0, 8.0, 0.1)
+limite_sup = st.sidebar.slider("Límite Superior (Ángulo 2θ)", 5.0, 35.0, 15.0, 0.1)
 usar_normalizacion = st.sidebar.checkbox("Normalizar difractogramas", value=True)
 
 archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra)", type=["xlsx", "xls"])
 
 if archivo_subido is not None:
     try:
-        # --- 1. LECTURA Y RECORTE ESTRICTO XRD ---
+        # --- 1. LECTURA Y EXTRACCIÓN QUIRÚRGICA XRD ---
         df_xrd = pd.read_excel(archivo_subido, sheet_name='XRD diferentes tiempos')
         
-        # Recortar obligatoriamente a las primeras 4 columnas (evita el error multidimensional)
-        df_xrd = df_xrd.iloc[:, :4].copy()
-        df_xrd.columns = ['Angulo 2tetha', 'HDL 0H', 'Angulo 2tetha.1', 'HDL 96H']
+        # Extraemos exactamente las columnas por índice:
+        # 0H: Col 0 (Ángulo), Col 1 (HDL 0H)
+        df_0h = df_xrd.iloc[:, [0, 1]].copy()
+        df_0h.columns = ['Angulo', 'Intensidad']
         
-        # Limpiar datos no numéricos
-        df_xrd = df_xrd.apply(pd.to_numeric, errors='coerce')
-        df_xrd = df_xrd.dropna(how='all') # Quitar filas 100% vacías
+        # 96H: Col 4 (Ángulo 96H), Col 8 (HDL 96H)
+        df_96h = df_xrd.iloc[:, [4, 8]].copy()
+        df_96h.columns = ['Angulo', 'Intensidad']
+        
+        # Limpiamos cada una independientemente de NaNs
+        df_0h = df_0h.apply(pd.to_numeric, errors='coerce').dropna()
+        df_96h = df_96h.apply(pd.to_numeric, errors='coerce').dropna()
             
-        mask_0h = (df_xrd['Angulo 2tetha'] >= limite_inf) & (df_xrd['Angulo 2tetha'] <= limite_sup)
-        x_0h = df_xrd.loc[mask_0h, 'Angulo 2tetha'].values
-        y_0h = df_xrd.loc[mask_0h, 'HDL 0H'].fillna(0).values
+        mask_0h = (df_0h['Angulo'] >= limite_inf) & (df_0h['Angulo'] <= limite_sup)
+        x_0h = df_0h.loc[mask_0h, 'Angulo'].values
+        y_0h = df_0h.loc[mask_0h, 'Intensidad'].values
 
-        mask_96h = (df_xrd['Angulo 2tetha.1'] >= limite_inf) & (df_xrd['Angulo 2tetha.1'] <= limite_sup)
-        x_96h = df_xrd.loc[mask_96h, 'Angulo 2tetha.1'].values
-        y_96h = df_xrd.loc[mask_96h, 'HDL 96H'].fillna(0).values
+        mask_96h = (df_96h['Angulo'] >= limite_inf) & (df_96h['Angulo'] <= limite_sup)
+        x_96h = df_96h.loc[mask_96h, 'Angulo'].values
+        y_96h = df_96h.loc[mask_96h, 'Intensidad'].values
+
+        # === SEGURO DE VIDA PARA ARREGLOS VACÍOS ===
+        if len(x_0h) == 0 or len(x_96h) == 0:
+            st.warning(f"⚠️ ¡Atención! No se encontraron datos entre los ángulos {limite_inf}° y {limite_sup}°. Mueva los deslizadores de la izquierda para atrapar el pico de su Excel.")
+            st.stop()
 
         if usar_normalizacion:
             y_0h = normalizar_senal(y_0h)
@@ -153,11 +163,8 @@ if archivo_subido is not None:
 
         # --- 2. LECTURA Y RECORTE ESTRICTO CINÉTICA ---
         df_cin = pd.read_excel(archivo_subido, sheet_name='Cinetica', skiprows=1)
-        
-        # Recortar obligatoriamente a las primeras 3 columnas
         df_cin = df_cin.iloc[:, :3].copy()
         df_cin.columns = ['Tiempo', 'GSH', 'NAC']
-        
         df_cin = df_cin.apply(pd.to_numeric, errors='coerce')
         df_cin = df_cin.dropna(subset=['Tiempo', 'GSH', 'NAC'])
 
@@ -193,7 +200,7 @@ if archivo_subido is not None:
         )
 
         # --- 5. INTERFAZ VISUAL ---
-        t1, t2, t3, t4 = st.tabs(["📊 Cristalografía (XRD)", "⏱️ Cinética de Liberación", "📈 Correlación Estadística", "📋 Datos Crudos"])
+        t1, t2, t3, t4 = st.tabs(["Cristalografía (XRD)", "⏱️ Cinética de Liberación", "Correlación Estadística", "Datos Crudos"])
 
         with t1:
             st.markdown("### Métricas Estructurales del Vehículo (HDL)")
