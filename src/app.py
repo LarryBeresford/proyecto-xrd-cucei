@@ -236,7 +236,7 @@ if archivo_subido is not None:
             )
 
         # --- 5. INTERFAZ VISUAL ---
-        t1, t2, t3, t4 = st.tabs(["📊 Cristalografía (XRD)", "⏱️ Cinética de Liberación", "📈 Correlación Estadística", "📋 Datos Crudos"])
+        t1, t2, t3, t4 = st.tabs(["Cristalografía (XRD)", "Cinética de Liberación", "Correlación Estadística", "Datos Crudos"])
 
         with t1:
             st.markdown("### Métricas Estructurales del Vehículo (HDL)")
