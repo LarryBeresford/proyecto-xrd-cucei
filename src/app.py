@@ -13,16 +13,19 @@ from datetime import datetime
 # FUNCIONES FÍSICAS Y MATEMÁTICAS
 # ==========================================
 def calcular_distancia_bragg(angulo_2theta, longitud_onda=1.5406):
+    """Calcula la distancia interatómica d en Angstroms usando la Ley de Bragg"""
     theta = angulo_2theta / 2.0
     d = longitud_onda / (2 * np.sin(np.radians(theta)))
     return d
 
 def normalizar_senal(y):
+    """Escala la señal de 0 a 1 para comparación justa"""
     if len(y) == 0 or np.max(y) == np.min(y):
         return y
     return (y - np.min(y)) / (np.max(y) - np.min(y))
 
 def calcular_fwhm(x, y, pico_idx):
+    """Calcula la Anchura a Media Altura (FWHM) para medir amorfización"""
     try:
         resultados = peak_widths(y, [pico_idx], rel_height=0.5)
         ancho_indices = resultados[0][0]
@@ -32,7 +35,7 @@ def calcular_fwhm(x, y, pico_idx):
         return 0.0
 
 # ==========================================
-# GENERADOR DE PDF
+# GENERADOR DE PDF INSTITUCIONAL
 # ==========================================
 C_AZUL_RGB = (0, 45, 98)
 class ReportePDF(FPDF):
@@ -98,7 +101,7 @@ def generar_pdf(stats, datos_cin):
 # ==========================================
 # INTERFAZ WEB (STREAMLIT)
 # ==========================================
-st.set_page_config(page_title="Suite XRD & Cinética - CUCEI", layout="wide", page_icon="🔬")
+st.set_page_config(page_title="Suite XRD & Cinética", layout="wide", page_icon="🔬")
 
 col_logo, col_text = st.columns([1, 8])
 with col_text:
@@ -106,32 +109,31 @@ with col_text:
     st.markdown("**Universidad de Guadalajara | CUCEI - Laboratorio de Fisicoquímica**")
 st.markdown("---")
 
-# BARRA LATERAL
+# --- BARRA LATERAL ---
 st.sidebar.header("⚙️ Parámetros de XRD")
 limite_inf = st.sidebar.slider("Límite Inferior (Ángulo 2θ)", 2.0, 25.0, 8.0, 0.1)
 limite_sup = st.sidebar.slider("Límite Superior (Ángulo 2θ)", 5.0, 35.0, 15.0, 0.1)
 usar_normalizacion = st.sidebar.checkbox("Normalizar difractogramas", value=True)
 
-archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra)", type=["xlsx", "xls"])
+# --- CARGADOR DE ARCHIVOS ---
+archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra)", type=["xlsx"])
 
 if archivo_subido is not None:
     try:
-        # --- 1. LECTURA Y EXTRACCIÓN QUIRÚRGICA XRD ---
+        # --- 1. LECTURA Y EXTRACCIÓN QUIRÚRGICA XRD (Anti-errores de Excel) ---
         df_xrd = pd.read_excel(archivo_subido, sheet_name='XRD diferentes tiempos')
         
-        # Extraemos exactamente las columnas por índice:
-        # 0H: Col 0 (Ángulo), Col 1 (HDL 0H)
+        # Extracción exacta por índice de columnas
         df_0h = df_xrd.iloc[:, [0, 1]].copy()
         df_0h.columns = ['Angulo', 'Intensidad']
-        
-        # 96H: Col 4 (Ángulo 96H), Col 8 (HDL 96H)
         df_96h = df_xrd.iloc[:, [4, 8]].copy()
         df_96h.columns = ['Angulo', 'Intensidad']
         
-        # Limpiamos cada una independientemente de NaNs
+        # Limpieza independiente de vacíos
         df_0h = df_0h.apply(pd.to_numeric, errors='coerce').dropna()
         df_96h = df_96h.apply(pd.to_numeric, errors='coerce').dropna()
             
+        # Filtros de los deslizadores
         mask_0h = (df_0h['Angulo'] >= limite_inf) & (df_0h['Angulo'] <= limite_sup)
         x_0h = df_0h.loc[mask_0h, 'Angulo'].values
         y_0h = df_0h.loc[mask_0h, 'Intensidad'].values
@@ -140,7 +142,7 @@ if archivo_subido is not None:
         x_96h = df_96h.loc[mask_96h, 'Angulo'].values
         y_96h = df_96h.loc[mask_96h, 'Intensidad'].values
 
-        # === SEGURO DE VIDA PARA ARREGLOS VACÍOS ===
+        # Seguro de Vida (Previene error Zero-Size Array)
         if len(x_0h) == 0 or len(x_96h) == 0:
             st.warning(f"⚠️ ¡Atención! No se encontraron datos entre los ángulos {limite_inf}° y {limite_sup}°. Mueva los deslizadores de la izquierda para atrapar el pico de su Excel.")
             st.stop()
@@ -149,25 +151,24 @@ if archivo_subido is not None:
             y_0h = normalizar_senal(y_0h)
             y_96h = normalizar_senal(y_96h)
 
+        # Cálculos Físicos
         area_0h = simpson(y=y_0h, x=x_0h)
         area_96h = simpson(y=y_96h, x=x_96h)
         perdida_porcentaje = ((area_0h - area_96h) / area_0h) * 100
 
         idx_0h, idx_96h = np.argmax(y_0h), np.argmax(y_96h)
-        pico_x_0h, pico_x_96h = x_0h[idx_0h], x_96h[idx_96h]
-        
-        dist_0h = calcular_distancia_bragg(pico_x_0h)
-        dist_96h = calcular_distancia_bragg(pico_x_96h)
+        dist_0h = calcular_distancia_bragg(x_0h[idx_0h])
+        dist_96h = calcular_distancia_bragg(x_96h[idx_96h])
         fwhm_0h = calcular_fwhm(x_0h, y_0h, idx_0h)
         fwhm_96h = calcular_fwhm(x_96h, y_96h, idx_96h)
 
-        # --- 2. LECTURA Y RECORTE ESTRICTO CINÉTICA ---
+        # --- 2. LECTURA CINÉTICA ---
         df_cin = pd.read_excel(archivo_subido, sheet_name='Cinetica', skiprows=1)
         df_cin = df_cin.iloc[:, :3].copy()
         df_cin.columns = ['Tiempo', 'GSH', 'NAC']
-        df_cin = df_cin.apply(pd.to_numeric, errors='coerce')
-        df_cin = df_cin.dropna(subset=['Tiempo', 'GSH', 'NAC'])
+        df_cin = df_cin.apply(pd.to_numeric, errors='coerce').dropna(subset=['Tiempo', 'GSH', 'NAC'])
 
+        # Interpolación
         horas_objetivo = np.array([0, 24, 48, 72, 96])
         minutos_objetivo = horas_objetivo * 60
         
@@ -177,12 +178,12 @@ if archivo_subido is not None:
         gsh_interp = np.clip(f_gsh(minutos_objetivo), 0, 100)
         nac_interp = np.clip(f_nac(minutos_objetivo), 0, 100)
 
-        # --- 3. ESTADÍSTICA ---
+        # --- 3. ESTADÍSTICA (PEARSON) ---
         degradacion_teorica = np.linspace(0, perdida_porcentaje, 5) 
         r_gsh, p_val_gsh = pearsonr(degradacion_teorica, gsh_interp)
         r_nac, p_val_nac = pearsonr(degradacion_teorica, nac_interp)
 
-        # --- 4. BOTÓN PDF ---
+        # --- 4. BOTÓN DESCARGA PDF ---
         stats_dict = {
             'perdida': perdida_porcentaje, 'a0': area_0h, 'a96': area_96h, 
             'delta_d': dist_96h - dist_0h, 'r_gsh': r_gsh, 'p_gsh': p_val_gsh, 
@@ -193,15 +194,16 @@ if archivo_subido is not None:
         pdf_bytes = generar_pdf(stats_dict, cin_dict)
         st.sidebar.markdown("---")
         st.sidebar.download_button(
-            label="Descargar Reporte (PDF)",
+            label="📥 Descargar Reporte Ejecutivo (PDF)",
             data=pdf_bytes,
             file_name=f"Reporte_CUCEI_{datetime.now().strftime('%Y%m%d')}.pdf",
             mime="application/pdf"
         )
 
-        # --- 5. INTERFAZ VISUAL ---
-        t1, t2, t3, t4 = st.tabs(["Cristalografía (XRD)", "Cinética de Liberación", "Correlación Estadística", "Datos Crudos"])
+        # --- 5. INTERFAZ VISUAL DE ALTO NIVEL (PLOTLY) ---
+        t1, t2, t3, t4 = st.tabs(["📊 Cristalografía (XRD)", "⏱️ Cinética de Liberación", "📈 Correlación Estadística", "📋 Datos Crudos"])
 
+        # Pestaña XRD
         with t1:
             st.markdown("### Métricas Estructurales del Vehículo (HDL)")
             c1, c2, c3, c4 = st.columns(4)
@@ -213,20 +215,23 @@ if archivo_subido is not None:
             fig_xrd = go.Figure()
             fig_xrd.add_trace(go.Scatter(x=x_0h, y=y_0h, fill='tozeroy', mode='lines', name='Intacto (0h)', line=dict(color='#002D62', width=2)))
             fig_xrd.add_trace(go.Scatter(x=x_96h, y=y_96h, fill='tozeroy', mode='lines', name='Degradado (96h)', line=dict(color='#F0A800', width=2)))
-            fig_xrd.update_layout(xaxis_title='Ángulo 2θ', yaxis_title='Intensidad', template="plotly_white", height=450)
+            fig_xrd.update_layout(xaxis_title='Ángulo 2θ', yaxis_title='Intensidad (Normalizada)', template="plotly_white", height=450, hovermode="x unified")
             st.plotly_chart(fig_xrd, use_container_width=True)
 
+        # Pestaña Cinética
         with t2:
-            st.markdown("### Perfil de Liberación (GSH vs NAC)")
+            st.markdown("### Perfil de Liberación Interpolado (GSH vs NAC)")
             fig_cin = go.Figure()
             fig_cin.add_trace(go.Scatter(x=df_cin['Tiempo'], y=df_cin['GSH'], mode='lines', name='GSH (Crudo)', line=dict(color='rgba(0, 45, 98, 0.4)', dash='dash')))
             fig_cin.add_trace(go.Scatter(x=df_cin['Tiempo'], y=df_cin['NAC'], mode='lines', name='NAC (Crudo)', line=dict(color='rgba(240, 168, 0, 0.4)', dash='dash')))
             fig_cin.add_trace(go.Scatter(x=minutos_objetivo, y=gsh_interp, mode='markers+lines', name='GSH (Interpolado)', marker=dict(color='#002D62', size=10)))
             fig_cin.add_trace(go.Scatter(x=minutos_objetivo, y=nac_interp, mode='markers+lines', name='NAC (Interpolado)', marker=dict(color='#F0A800', size=10)))
-            fig_cin.update_layout(xaxis_title='Tiempo (Minutos)', yaxis_title='% Liberación', template="plotly_white", height=450)
+            fig_cin.update_layout(xaxis_title='Tiempo (Minutos)', yaxis_title='% Liberación', template="plotly_white", height=450, hovermode="x unified")
             st.plotly_chart(fig_cin, use_container_width=True)
 
+        # Pestaña Estadística
         with t3:
+            st.markdown("### Análisis de Correlación: Desgaste vs Liberación")
             c_stat1, c_stat2 = st.columns(2)
             c_stat1.metric("Correlación Pearson (GSH)", f"r = {r_gsh:.4f}", f"Valor p: {p_val_gsh:.4f}")
             c_stat2.metric("Correlación Pearson (NAC)", f"r = {r_nac:.4f}", f"Valor p: {p_val_nac:.4f}")
@@ -238,8 +243,10 @@ if archivo_subido is not None:
             fig_scatter.update_layout(xaxis_title='Pérdida de Cristalinidad Estructural (%)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", height=450)
             st.plotly_chart(fig_scatter, use_container_width=True)
 
+        # Pestaña Datos
         with t4:
+            st.markdown("### Previsualización de Datos Extraídos")
             st.dataframe(df_xrd.head(20), use_container_width=True)
 
     except Exception as e:
-        st.error(f"Error procesando los datos. Detalles: {e}")
+        st.error(f"Error procesando los datos. Asegúrese de cargar la plantilla correcta. Detalles técnicos: {e}")
