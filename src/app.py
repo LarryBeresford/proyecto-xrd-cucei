@@ -34,6 +34,25 @@ from hdl_suite import config, pipeline  # noqa: E402
 
 PALETA_TIEMPOS = ['#002D62', '#3D6CB9', '#8AA9D6', '#F0A800', '#B77900']
 
+
+def _textpos_alternado(n: int, invertido: bool = False) -> list:
+    """
+    Alterna la posición de las etiquetas de tiempo ('top center' /
+    'bottom center') punto a punto, en vez de fijar la misma posición para
+    los 5 tiempos.
+
+    Racional: en las gráficas de correlación (dispersión) es común que dos
+    tiempos consecutivos caigan muy cerca -o exactamente- en el mismo valor
+    de X o Y (p.ej. cuando el FWHM ya colapsó a ~0 en dos tiempos seguidos).
+    Con una posición de texto fija, las etiquetas '48h' y '72h' quedan
+    literalmente encimadas una sobre otra. Alternar arriba/abajo separa
+    visualmente las etiquetas. 'invertido' desfasa la secuencia para que,
+    además, la serie GSH y la serie NAC (que comparten la misma X) no se
+    encimen entre sí.
+    """
+    patron = ["bottom center", "top center"] if invertido else ["top center", "bottom center"]
+    return [patron[i % 2] for i in range(n)]
+
 # Los fuentes core de FPDF (Helvetica) solo soportan Latin-1. Streamlit/la UI
 # web sí soportan UTF-8 completo (emojis, guiones largos, etc.), pero ese
 # mismo texto reventaba el PDF si se reutilizaba tal cual (p.ej. el guion
@@ -249,7 +268,7 @@ def generar_html_snapshot(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], par
 
     secciones_html.append(f"""
     <div class="card">
-      <h2>📸 Parámetros de este Snapshot</h2>
+      <h2>Parámetros de este Snapshot</h2>
       <p class="muted">Capturado el {params['timestamp']}. Esta es la configuración exacta con la que se generaron los resultados de abajo -- si cambias los sliders en la app, genera un nuevo snapshot.</p>
       <table class="params-table">{"".join(filas_params)}</table>
     </div>
@@ -266,7 +285,7 @@ def generar_html_snapshot(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], par
 
         secciones_html.append(f"""
         <div class="card">
-          <h2>📊 1. Análisis Estructural (XRD)</h2>
+          <h2>1. Análisis Estructural (XRD)</h2>
           {_bloque_parrafos(ins['contexto'], ins['bragg'])}
           <div class="kpi-row">
             {_tarjeta_kpi('Pérdida Cristalinidad (96h)', f"{r.perdida_cristalinidad[-1]:.2f}%")}
@@ -285,13 +304,13 @@ def generar_html_snapshot(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], par
         </div>
 
         <div class="card">
-          <h2>💧 2. Cinética de Liberación</h2>
+          <h2>2. Cinética de Liberación</h2>
           {_bloque_parrafos(ins['cinetica'])}
           {graf_cin}
         </div>
 
         <div class="card">
-          <h2>📈 3. Correlación Estadística (XRD vs. Cinética)</h2>
+          <h2>3. Correlación Estadística (XRD vs. Cinética)</h2>
           {_bloque_parrafos(ins['correlacion'])}
           {_bloque_lista(ins['correlacion_detalle'])}
           <p class="muted">{ins['limitacion']}</p>
@@ -312,7 +331,7 @@ def generar_html_snapshot(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], par
 
         secciones_html.append(f"""
         <div class="card">
-          <h2>🧪 4. Análisis Químico (FTIR) — Material: {rf.material}</h2>
+          <h2>4. Análisis Químico (FTIR) — Material: {rf.material}</h2>
           {_bloque_parrafos(ins['contexto'], ins['banda'])}
           <div class="kpi-row">
             {_tarjeta_kpi('% Cambio de Banda (96h)', f"{rf.perdida_banda[-1]:+.2f}%")}
@@ -326,7 +345,7 @@ def generar_html_snapshot(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], par
         </div>
 
         <div class="card">
-          <h2>📈 5. Correlación Estadística (FTIR vs. Cinética)</h2>
+          <h2>5. Correlación Estadística (FTIR vs. Cinética)</h2>
           {_bloque_lista(ins['correlacion_detalle'])}
           <p class="muted">{ins['limitacion']}</p>
           <div class="two-col">
@@ -344,36 +363,40 @@ def generar_html_snapshot(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], par
 <meta charset="utf-8">
 <title>Snapshot - HDL Analytical Suite</title>
 <style>
-  body {{ font-family: 'Segoe UI', Arial, sans-serif; background:#FAFBFC; color:#222; margin:0; padding:0 0 40px 0; }}
-  .banner {{ background: linear-gradient(90deg, {config.C_AZUL} 0%, #01419b 100%); color:white; padding:28px 36px; }}
-  .banner h1 {{ margin:0; font-size:1.7rem; }}
-  .banner p {{ margin:6px 0 0 0; color:{config.C_DORADO}; font-weight:600; }}
+  * {{ box-sizing: border-box; }}
+  body {{ font-family: 'Segoe UI', Arial, sans-serif; background:#FAFBFC; color:#2A2A2A; margin:0; padding:0 0 30px 0; line-height:1.55; }}
+  .banner {{ background: linear-gradient(90deg, {config.C_AZUL} 0%, #01419b 100%); color:white; padding:30px 36px; border-bottom:4px solid {config.C_DORADO}; }}
+  .banner h1 {{ margin:0; font-size:1.6rem; font-weight:600; letter-spacing:0.2px; }}
+  .banner p {{ margin:8px 0 0 0; color:{config.C_DORADO}; font-weight:600; font-size:0.9rem; letter-spacing:0.3px; }}
   .container {{ max-width: 980px; margin: 24px auto; padding: 0 20px; }}
-  .card {{ background:white; border:1px solid #E5E9F0; border-left:4px solid {config.C_AZUL}; border-radius:10px; padding:22px 26px; margin-bottom:22px; box-shadow:0 1px 3px rgba(0,0,0,0.05); }}
-  .card h2 {{ color:{config.C_AZUL}; margin-top:0; }}
-  .card h3 {{ color:{config.C_AZUL}; font-size:1.05rem; }}
-  .muted {{ color:#666; font-size:0.92rem; }}
-  .kpi-row {{ display:flex; flex-wrap:wrap; gap:14px; margin:16px 0; }}
-  .kpi-card {{ background:#F5F7FA; border-left:3px solid {config.C_DORADO}; border-radius:8px; padding:10px 16px; min-width:180px; flex:1; }}
-  .kpi-label {{ font-size:0.8rem; color:#555; font-weight:600; }}
-  .kpi-value {{ font-size:1.15rem; color:{config.C_AZUL}; font-weight:700; }}
-  .params-table {{ width:100%; border-collapse:collapse; margin-top:10px; }}
-  .params-table td {{ padding:6px 10px; border-bottom:1px solid #eee; font-size:0.92rem; }}
-  .params-table td:first-child {{ font-weight:600; color:#444; width:40%; }}
-  .two-col {{ display:flex; gap:16px; flex-wrap:wrap; }}
+  .card {{ background:white; border:1px solid #E5E9F0; border-left:4px solid {config.C_AZUL}; border-radius:8px; padding:26px 30px; margin-bottom:22px; box-shadow:0 1px 4px rgba(15,35,70,0.06); }}
+  .card h2 {{ color:{config.C_AZUL}; margin:0 0 16px 0; font-size:1.25rem; font-weight:600; padding-bottom:10px; border-bottom:2px solid #EEF1F6; }}
+  .card h3 {{ color:{config.C_AZUL}; font-size:1rem; font-weight:600; margin:20px 0 8px 0; }}
+  .card p {{ margin:0 0 12px 0; font-size:0.95rem; }}
+  .muted {{ color:#6B7280; font-size:0.88rem; }}
+  .kpi-row {{ display:flex; flex-wrap:wrap; gap:14px; margin:18px 0; }}
+  .kpi-card {{ background:#F5F7FA; border-left:3px solid {config.C_DORADO}; border-radius:6px; padding:12px 16px; min-width:180px; flex:1; }}
+  .kpi-label {{ font-size:0.76rem; color:#5A6472; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }}
+  .kpi-value {{ font-size:1.2rem; color:{config.C_AZUL}; font-weight:700; margin-top:2px; }}
+  .params-table {{ width:100%; border-collapse:collapse; margin-top:12px; font-size:0.92rem; }}
+  .params-table td {{ padding:9px 12px; border-bottom:1px solid #EEF1F6; }}
+  .params-table tr:last-child td {{ border-bottom:none; }}
+  .params-table td:first-child {{ font-weight:600; color:#444; width:42%; }}
+  .two-col {{ display:flex; gap:18px; flex-wrap:wrap; margin-top:10px; }}
   .two-col > div {{ flex:1; min-width:320px; }}
-  ul {{ padding-left: 20px; }}
-  li {{ margin-bottom: 6px; }}
+  ul {{ padding-left: 20px; margin:10px 0; }}
+  li {{ margin-bottom: 8px; font-size:0.95rem; }}
+  .footer-bar {{ text-align:center; color:#9AA3AF; font-size:0.8rem; letter-spacing:0.3px; padding-top:14px; margin-top:6px; border-top:1px solid #E5E9F0; }}
 </style>
 </head>
 <body>
   <div class="banner">
-    <h1>🔬 HDL Analytical Suite — Snapshot del Análisis</h1>
+    <h1>HDL Analytical Suite — Snapshot del Análisis</h1>
     <p>Universidad de Guadalajara · CUCEI — Laboratorio de Fisicoquímica</p>
   </div>
   <div class="container">
     {cuerpo}
-    <p class="muted" style="text-align:center;">Generado automáticamente por HDL Analytical Suite el {params['timestamp']}.</p>
+    <div class="footer-bar">HDL Analytical Suite &middot; CUCEI</div>
   </div>
 </body>
 </html>"""
@@ -395,9 +418,13 @@ class ReportePDF(FPDF):
 
     def footer(self):
         self.set_y(-15)
+        self.set_draw_color(225, 225, 225)
+        self.set_line_width(0.2)
+        self.line(15, self.get_y(), 195, self.get_y())
+        self.set_y(-12)
         self.set_font('Helvetica', 'I', 8)
-        self.set_text_color(128, 128, 128)
-        self.cell(0, 10, f'Pagina {self.page_no()} | Generado {datetime.now().strftime("%Y-%m-%d %H:%M")}', 0, 0, 'C')
+        self.set_text_color(140, 140, 140)
+        self.cell(0, 8, f'Pagina {self.page_no()}', 0, 0, 'C')
 
     def seccion(self, titulo):
         self.set_font('Helvetica', 'B', 13)
@@ -420,6 +447,33 @@ class ReportePDF(FPDF):
         self.multi_cell(0, 6, _pdf_safe(texto), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(0.5)
 
+    def tabla_datos(self, encabezados: list, filas: list, anchos: list, alturas_fila: float = 7.5, align: str = 'C'):
+        """
+        Dibuja una tabla con bordes, encabezado en azul institucional y
+        renglones alternados (zebra) -- usa pdf.cell() celda por celda en
+        vez de texto plano con espacios de relleno, porque Helvetica es una
+        fuente proporcional: un padding manual tipo f"{x:>10}" solo alinea
+        en fuentes monoespaciadas y en Helvetica termina viéndose
+        desalineado/encimado. Con celdas reales cada columna respeta su
+        propio ancho sin importar cuántos caracteres tenga el contenido.
+        """
+        self.set_font('Helvetica', 'B', 9)
+        self.set_fill_color(*config.C_AZUL_RGB)
+        self.set_text_color(255, 255, 255)
+        for encabezado, ancho in zip(encabezados, anchos):
+            self.cell(ancho, 8, _pdf_safe(encabezado), 1, 0, 'C', True)
+        self.ln()
+
+        self.set_font('Helvetica', '', 9)
+        self.set_text_color(30, 30, 30)
+        for i, fila in enumerate(filas):
+            self.set_fill_color(243, 246, 250) if i % 2 == 0 else self.set_fill_color(255, 255, 255)
+            for valor, ancho in zip(fila, anchos):
+                self.cell(ancho, alturas_fila, _pdf_safe(str(valor)), 1, 0, align, True)
+            self.ln()
+        self.set_text_color(0, 0, 0)
+        self.ln(2)
+
     def portada_parametros(self, params: dict):
         self.add_page()
         self.set_y(38)
@@ -430,11 +484,6 @@ class ReportePDF(FPDF):
             "Si se ajustan los sliders en la aplicacion, debe generarse un nuevo snapshot."
         )
         self.ln(2)
-        self.set_font('Helvetica', 'B', 10)
-        self.set_fill_color(240, 240, 240)
-        self.cell(70, 8, 'Parametro', 1, 0, 'C', True)
-        self.cell(120, 8, 'Valor', 1, 1, 'C', True)
-        self.set_font('Helvetica', '', 10)
 
         filas = []
         if params.get('xrd'):
@@ -453,10 +502,7 @@ class ReportePDF(FPDF):
                 ('Banda espectral (cm-1)', f"{p['banda_inf']:.0f} - {p['banda_sup']:.0f}"),
                 ('Normalizacion Min-Max (FTIR)', 'Si' if p['normalizar'] else 'No'),
             ]
-        for nombre, valor in filas:
-            self.cell(70, 8, _pdf_safe(nombre), 1)
-            self.cell(120, 8, _pdf_safe(str(valor)), 1)
-            self.ln()
+        self.tabla_datos(['Parametro', 'Valor'], filas, [70, 120], align='L')
 
 
 def _insertar_grafica(pdf: FPDF, fig, x=15, w=180, width=800, height=400, scale=2):
@@ -503,15 +549,14 @@ def generar_pdf(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], params: dict)
         pdf.parrafo(ins['fwhm'])
         pdf.subtitulo('Lectura de resultados')
         pdf.parrafo(ins['resultados_kpi'])
-        pdf.set_font('Helvetica', '', 9.5)
-        pdf.set_text_color(0, 0, 0)
-        tabla_txt = "Tiempo(h) | Area Simpson | FWHM(2t) | d-spacing(A) | % Perdida Cristalinidad\n"
-        for i, t in enumerate(r.tiempos_h):
-            tabla_txt += (
-                f"{t:>9} | {r.areas[i]:>12.3f} | {r.fwhm[i]:>8.3f} | "
-                f"{r.d_spacing[i]:>12.3f} | {r.perdida_cristalinidad[i]:>10.2f}%\n"
-            )
-        pdf.multi_cell(0, 5.2, tabla_txt, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        filas_xrd = [
+            (t, f"{r.areas[i]:.3f}", f"{r.fwhm[i]:.3f}", f"{r.d_spacing[i]:.3f}", f"{r.perdida_cristalinidad[i]:.2f}%")
+            for i, t in enumerate(r.tiempos_h)
+        ]
+        pdf.tabla_datos(
+            ['Tiempo (h)', 'Area Simpson', 'FWHM (2theta)', 'd-spacing (A)', '% Perdida Cristalinidad'],
+            filas_xrd, [25, 35, 35, 35, 50],
+        )
         _insertar_grafica(pdf, xrd_ctx['fig_xrd'])
         _insertar_grafica(pdf, xrd_ctx['fig_degradacion'])
 
@@ -519,16 +564,11 @@ def generar_pdf(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], params: dict)
         pdf.set_y(38)
         pdf.seccion('2. Cinetica de Liberacion (Interpolada) - XRD')
         pdf.parrafo(ins['cinetica'])
-        pdf.set_font('Helvetica', 'B', 10)
-        pdf.set_fill_color(240, 240, 240)
-        pdf.cell(40, 8, 'Hora', 1, 0, 'C', True)
-        pdf.cell(70, 8, '% GSH Liberado', 1, 0, 'C', True)
-        pdf.cell(70, 8, '% NAC Liberado', 1, 1, 'C', True)
-        pdf.set_font('Helvetica', '', 10)
-        for i in range(len(r.tiempos_h)):
-            pdf.cell(40, 8, str(r.tiempos_h[i]), 1, 0, 'C')
-            pdf.cell(70, 8, f"{xrd_ctx['gsh_pct'][i]:.2f}%", 1, 0, 'C')
-            pdf.cell(70, 8, f"{xrd_ctx['nac_pct'][i]:.2f}%", 1, 1, 'C')
+        filas_cin = [
+            (r.tiempos_h[i], f"{xrd_ctx['gsh_pct'][i]:.2f}%", f"{xrd_ctx['nac_pct'][i]:.2f}%")
+            for i in range(len(r.tiempos_h))
+        ]
+        pdf.tabla_datos(['Hora', '% GSH Liberado', '% NAC Liberado'], filas_cin, [40, 70, 70])
         _insertar_grafica(pdf, xrd_ctx['fig_cin'])
 
         pdf.add_page()
@@ -558,15 +598,14 @@ def generar_pdf(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict], params: dict)
         pdf.parrafo(ins['banda'])
         pdf.subtitulo('Lectura de resultados')
         pdf.parrafo(ins['resultados_kpi'])
-        pdf.set_font('Helvetica', '', 9.5)
-        pdf.set_text_color(0, 0, 0)
-        tabla_txt = "Tiempo(h) | Area Simpson | FWHM(cm-1) | Posicion Banda(cm-1) | % Cambio Banda\n"
-        for i, t in enumerate(rf.tiempos_h):
-            tabla_txt += (
-                f"{t:>9} | {rf.areas[i]:>12.3f} | {rf.fwhm[i]:>10.3f} | "
-                f"{rf.posicion_banda_cm1[i]:>18.2f} | {rf.perdida_banda[i]:>10.2f}%\n"
-            )
-        pdf.multi_cell(0, 5.2, tabla_txt, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        filas_ftir = [
+            (t, f"{rf.areas[i]:.3f}", f"{rf.fwhm[i]:.3f}", f"{rf.posicion_banda_cm1[i]:.2f}", f"{rf.perdida_banda[i]:+.2f}%")
+            for i, t in enumerate(rf.tiempos_h)
+        ]
+        pdf.tabla_datos(
+            ['Tiempo (h)', 'Area Simpson', 'FWHM (cm-1)', 'Posicion Banda (cm-1)', '% Cambio Banda'],
+            filas_ftir, [25, 35, 35, 40, 45],
+        )
         _insertar_grafica(pdf, ftir_ctx['fig_ftir'])
         _insertar_grafica(pdf, ftir_ctx['fig_evolucion'])
 
@@ -715,14 +754,15 @@ with tab_xrd:
                 fig_cin.add_trace(go.Scatter(x=resultado.tiempos_h, y=nac_pct, mode='markers+lines', name='NAC', marker=dict(color=config.C_DORADO, size=12, symbol='diamond')))
                 fig_cin.update_layout(xaxis_title='Tiempo (horas)', yaxis_title='% Liberado', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=450)
 
+                _n_t = len(resultado.tiempos_h)
                 fig_sca_area = go.Figure()
-                fig_sca_area.add_trace(go.Scatter(x=resultado.perdida_cristalinidad, y=gsh_pct, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
-                fig_sca_area.add_trace(go.Scatter(x=resultado.perdida_cristalinidad, y=nac_pct, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
+                fig_sca_area.add_trace(go.Scatter(x=resultado.perdida_cristalinidad, y=gsh_pct, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado.tiempos_h], textposition=_textpos_alternado(_n_t), textfont=dict(size=10)))
+                fig_sca_area.add_trace(go.Scatter(x=resultado.perdida_cristalinidad, y=nac_pct, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado.tiempos_h], textposition=_textpos_alternado(_n_t, invertido=True), textfont=dict(size=10)))
                 fig_sca_area.update_layout(xaxis_title='% Pérdida de Cristalinidad (real, por tiempo)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=480)
 
                 fig_sca_fwhm = go.Figure()
-                fig_sca_fwhm.add_trace(go.Scatter(x=resultado.fwhm, y=gsh_pct, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
-                fig_sca_fwhm.add_trace(go.Scatter(x=resultado.fwhm, y=nac_pct, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
+                fig_sca_fwhm.add_trace(go.Scatter(x=resultado.fwhm, y=gsh_pct, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado.tiempos_h], textposition=_textpos_alternado(_n_t), textfont=dict(size=10)))
+                fig_sca_fwhm.add_trace(go.Scatter(x=resultado.fwhm, y=nac_pct, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado.tiempos_h], textposition=_textpos_alternado(_n_t, invertido=True), textfont=dict(size=10)))
                 fig_sca_fwhm.update_layout(xaxis_title='FWHM del pico basal (°2θ)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=480)
 
                 xrd_ctx = dict(
@@ -859,14 +899,15 @@ with tab_ftir:
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 )
 
+                _n_tf = len(resultado_f.tiempos_h)
                 fig_sca_area_f = go.Figure()
-                fig_sca_area_f.add_trace(go.Scatter(x=resultado_f.perdida_banda, y=gsh_pct_f, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition="top center"))
-                fig_sca_area_f.add_trace(go.Scatter(x=resultado_f.perdida_banda, y=nac_pct_f, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition="top center"))
+                fig_sca_area_f.add_trace(go.Scatter(x=resultado_f.perdida_banda, y=gsh_pct_f, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition=_textpos_alternado(_n_tf), textfont=dict(size=10)))
+                fig_sca_area_f.add_trace(go.Scatter(x=resultado_f.perdida_banda, y=nac_pct_f, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition=_textpos_alternado(_n_tf, invertido=True), textfont=dict(size=10)))
                 fig_sca_area_f.update_layout(xaxis_title='% Cambio de Banda (real, por tiempo)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=480)
 
                 fig_sca_fwhm_f = go.Figure()
-                fig_sca_fwhm_f.add_trace(go.Scatter(x=resultado_f.fwhm, y=gsh_pct_f, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition="top center"))
-                fig_sca_fwhm_f.add_trace(go.Scatter(x=resultado_f.fwhm, y=nac_pct_f, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition="top center"))
+                fig_sca_fwhm_f.add_trace(go.Scatter(x=resultado_f.fwhm, y=gsh_pct_f, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition=_textpos_alternado(_n_tf), textfont=dict(size=10)))
+                fig_sca_fwhm_f.add_trace(go.Scatter(x=resultado_f.fwhm, y=nac_pct_f, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado_f.tiempos_h], textposition=_textpos_alternado(_n_tf, invertido=True), textfont=dict(size=10)))
                 fig_sca_fwhm_f.update_layout(xaxis_title='FWHM de la banda (cm⁻¹)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=480)
 
                 ftir_ctx = dict(
