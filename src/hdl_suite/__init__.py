@@ -18,7 +18,7 @@ estadística (Pearson) para evaluar causalidad entre degradación
 estructural y liberación de fármaco.
 """
 
-from . import config, data_io, preprocessing, bragg, crystallinity, kinetics, correlation, pipeline
+from . import config, data_io, preprocessing, bragg, crystallinity, kinetics, correlation, ftir, pipeline
 
 __all__ = [
     "config",
@@ -28,5 +28,6 @@ __all__ = [
     "crystallinity",
     "kinetics",
     "correlation",
+    "ftir",
     "pipeline",
 ]

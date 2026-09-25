@@ -1,14 +1,16 @@
 # HDL-SyncXRD
 
-**Suite analítica para cuantificar la degradación estructural de hidróxidos dobles laminares (HDL) mediante difracción de rayos X (XRD) y sincronizarla con la cinética de liberación de fármacos.**
+**Suite analítica para cuantificar la degradación estructural (XRD) y química (FTIR) de hidróxidos dobles laminares (HDL) y sincronizarla con la cinética de liberación de fármacos.**
 
 Proyecto académico de la Licenciatura en Química, CUCEI — Universidad de Guadalajara.
 
 ## Propósito
 
-La evaluación de la estabilidad de una matriz HDL suele depender de la inspección visual de difractogramas superpuestos. HDL-SyncXRD propone un flujo reproducible para convertir estas observaciones en métricas numéricas y compararlas con la liberación de moléculas como glutatión (GSH) y N-acetilcisteína (NAC).
+La evaluación de la estabilidad de una matriz HDL suele depender de la inspección visual de espectros superpuestos. HDL-SyncXRD propone un flujo reproducible para convertir estas observaciones en métricas numéricas y compararlas con la liberación de moléculas como glutatión (GSH) y N-acetilcisteína (NAC).
 
-La herramienta recibe datos experimentales de XRD y cinética, los limpia, alinea sus escalas de tiempo y genera visualizaciones y reportes técnicos. Su objetivo es apoyar el análisis cuantitativo, trazable y auditable de la evolución estructural de matrices inorgánicas durante ensayos de liberación.
+Objetivo general del proyecto (planteamiento del asesor): desarrollar una plataforma que permita la correlación de cambios estructurales y/o químicos detectables por **XRD y FTIR** con los fenómenos de liberación y degradación en HDL intercalados.
+
+La herramienta recibe datos experimentales de XRD, FTIR y cinética, los limpia, alinea sus escalas de tiempo y genera visualizaciones y reportes técnicos. Su objetivo es apoyar el análisis cuantitativo, trazable y auditable de la evolución estructural/química de matrices inorgánicas durante ensayos de liberación.
 
 > **Alcance científico:** las correlaciones calculadas describen asociación estadística entre variables sincronizadas. Por sí solas no demuestran causalidad; esta requiere controles, réplicas independientes y un diseño experimental apropiado.
 
@@ -25,6 +27,10 @@ La herramienta recibe datos experimentales de XRD y cinética, los limpia, aline
 - Visualización interactiva de XRD, evolución temporal de los índices de degradación, cinética y relaciones estadísticas.
 - Generación de reportes PDF institucionales y exportación de la tabla temporal sincronizada.
 - Núcleo de cálculo (`src/hdl_suite/`) desacoplado de la interfaz, con pruebas unitarias (`tests/`) que validan cada algoritmo contra casos de solución analítica conocida.
+- **Análisis FTIR** (`hdl_suite/ftir.py`): lectura de espectros de infrarrojo (número de onda vs. absorbancia) para HDL/GSH/NAC en los mismos 5 tiempos reales, con área de Simpson, FWHM y posición de banda (cm⁻¹) como índices de cambio químico, correlacionados vía Pearson (r y R²) con la cinética de liberación. La asignación química de la banda analizada debe confirmarse con el asesor/director.
+- R² (bondad de ajuste) reportado junto con Pearson r y su p-value en ambas técnicas.
+
+> **Nota metodológica:** la normalización Min-Max se aplica sobre el espectro completo *antes* de recortar la ventana de interés, no después — normalizar una ventana ya recortada reescala cada tiempo a su propio máximo local y puede enmascarar o exagerar artificialmente la pérdida real de intensidad entre tiempos. El índice FWHM es matemáticamente invariante a esta elección; el índice de área no lo es y debe interpretarse con esa salvedad.
 
 ## Flujo de análisis
 

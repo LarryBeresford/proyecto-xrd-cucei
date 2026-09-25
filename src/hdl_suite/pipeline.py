@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from . import config, data_io, preprocessing, bragg, crystallinity, kinetics, correlation
+from . import config, data_io, preprocessing, bragg, crystallinity, kinetics, correlation, ftir
 
 
 @dataclass
@@ -69,6 +69,16 @@ def ejecutar_pipeline(
 
     for t in tiempos_h:
         x_raw, y_raw = data_io.obtener_serie_hdl(df_xrd, t)
+
+        # Importante: la normalización se aplica sobre el ESPECTRO COMPLETO,
+        # antes de recortar la ventana del pico. Normalizar después de
+        # recortar reescala cada ventana a su propio máximo local, lo cual
+        # destruye la comparabilidad de área/FWHM entre tiempos (cada
+        # ventana terminaría con altura máxima = 1 sin importar cuánto se
+        # haya degradado realmente el pico).
+        if normalizar:
+            y_raw = preprocessing.normalizar_min_max(y_raw)
+
         x_win, y_win = crystallinity.recortar_ventana(x_raw, y_raw, limite_inf, limite_sup)
 
         if len(x_win) == 0:
@@ -80,9 +90,6 @@ def ejecutar_pipeline(
             d_spacing_vals.append(np.nan)
             pico_2theta_vals.append(np.nan)
             continue
-
-        if normalizar:
-            y_win = preprocessing.normalizar_min_max(y_win)
 
         series_xrd[t] = (x_win, y_win)
         areas.append(crystallinity.calcular_area_simpson(x_win, y_win))
@@ -129,5 +136,116 @@ def ejecutar_pipeline(
         series_xrd=series_xrd,
         limite_inf=limite_inf,
         limite_sup=limite_sup,
+        normalizado=normalizar,
+    )
+
+
+@dataclass
+class ResultadoAnalisisFTIR:
+    tiempos_h: list
+    material: str
+    areas: list
+    fwhm: list
+    posicion_banda_cm1: list
+    perdida_banda: list  # % de cambio del área de la banda vs t=0h (puede ser + o -)
+    df_cinetica_interpolada: pd.DataFrame
+    pearson_gsh_area: dict
+    pearson_nac_area: dict
+    pearson_gsh_fwhm: dict
+    pearson_nac_fwhm: dict
+    series_ftir: dict = field(default_factory=dict)
+    banda_inf: float = config.FTIR_BANDA_INF_DEFAULT
+    banda_sup: float = config.FTIR_BANDA_SUP_DEFAULT
+    normalizado: bool = True
+
+
+def ejecutar_pipeline_ftir(
+    ruta_excel_ftir: str = config.ARCHIVO_EXCEL_FTIR_DEFAULT,
+    ruta_excel_cinetica: str = config.ARCHIVO_EXCEL_DEFAULT,
+    banda_inf: float = config.FTIR_BANDA_INF_DEFAULT,
+    banda_sup: float = config.FTIR_BANDA_SUP_DEFAULT,
+    material: str = config.FTIR_MATERIAL_DEFAULT,
+    normalizar: bool = True,
+    tiempos_h: list = None,
+) -> ResultadoAnalisisFTIR:
+    """
+    Pipeline paralelo al de XRD, pero para espectros FTIR. Reutiliza el
+    mismo núcleo numérico (crystallinity.calcular_area_simpson /
+    calcular_fwhm, kinetics.interpolar_cinetica, correlation.calcular_pearson)
+    -- la Ley de Bragg NO aplica aquí, por lo que en su lugar se reporta la
+    posición (numero de onda, cm-1) de la banda característica en cada
+    tiempo, como indicador de desplazamiento químico.
+
+    Parameters
+    ----------
+    ruta_excel_ftir : ruta al Excel de espectros FTIR ("Datos Degradación
+        FTIR.xlsx" o equivalente: 3 filas de encabezado, columna 'x' en
+        cm-1, columnas '{MATERIAL}_{T}H').
+    ruta_excel_cinetica : ruta al Excel que contiene la hoja 'Cinetica'
+        (por defecto el Excel maestro de XRD, ya que la cinética no está
+        duplicada en el archivo de FTIR).
+    banda_inf, banda_sup : ventana espectral (cm-1) de la banda a analizar.
+    material : 'HDL', 'GSH' o 'NAC' -- qué espectro se analiza.
+    """
+    if tiempos_h is None:
+        tiempos_h = config.TIEMPOS_XRD_HORAS
+
+    df_ftir = ftir.cargar_ftir_crudo(ruta_excel_ftir)
+
+    series_ftir, areas, fwhm_vals, posicion_banda = {}, [], [], []
+
+    for t in tiempos_h:
+        x_raw, y_raw = ftir.obtener_serie_ftir(df_ftir, material, t)
+
+        if normalizar:
+            y_raw = preprocessing.normalizar_min_max(y_raw)
+
+        x_win, y_win = crystallinity.recortar_ventana(x_raw, y_raw, banda_inf, banda_sup)
+
+        if len(x_win) == 0:
+            series_ftir[t] = (x_win, y_win)
+            areas.append(0.0)
+            fwhm_vals.append(0.0)
+            posicion_banda.append(np.nan)
+            continue
+
+        series_ftir[t] = (x_win, y_win)
+        areas.append(crystallinity.calcular_area_simpson(x_win, y_win))
+        fwhm_vals.append(crystallinity.calcular_fwhm(x_win, y_win))
+
+        idx_pico = int(np.argmax(y_win))
+        posicion_banda.append(float(x_win[idx_pico]))
+
+    area_0h = areas[0] if areas else 0.0
+    perdida_banda = [
+        crystallinity.indice_perdida_cristalinidad(area_0h, a) for a in areas
+    ]
+
+    df_cin_cruda = data_io.cargar_cinetica_cruda(ruta_excel_cinetica)
+    df_cin_interp = kinetics.interpolar_cinetica(df_cin_cruda, horas_objetivo=tiempos_h)
+
+    gsh_pct = df_cin_interp['Liberacion_GSH_Porcentaje'].to_numpy()
+    nac_pct = df_cin_interp['Liberacion_NAC_Porcentaje'].to_numpy()
+
+    pearson_gsh_area = correlation.calcular_pearson(perdida_banda, gsh_pct)
+    pearson_nac_area = correlation.calcular_pearson(perdida_banda, nac_pct)
+    pearson_gsh_fwhm = correlation.calcular_pearson(fwhm_vals, gsh_pct)
+    pearson_nac_fwhm = correlation.calcular_pearson(fwhm_vals, nac_pct)
+
+    return ResultadoAnalisisFTIR(
+        tiempos_h=list(tiempos_h),
+        material=material,
+        areas=areas,
+        fwhm=fwhm_vals,
+        posicion_banda_cm1=posicion_banda,
+        perdida_banda=perdida_banda,
+        df_cinetica_interpolada=df_cin_interp,
+        pearson_gsh_area=pearson_gsh_area,
+        pearson_nac_area=pearson_nac_area,
+        pearson_gsh_fwhm=pearson_gsh_fwhm,
+        pearson_nac_fwhm=pearson_nac_fwhm,
+        series_ftir=series_ftir,
+        banda_inf=banda_inf,
+        banda_sup=banda_sup,
         normalizado=normalizar,
     )

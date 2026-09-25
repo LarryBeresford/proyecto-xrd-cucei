@@ -15,7 +15,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from hdl_suite import bragg, crystallinity, preprocessing, kinetics, correlation
+from hdl_suite import bragg, crystallinity, preprocessing, kinetics, correlation, ftir
 import pandas as pd
 
 
@@ -131,3 +131,60 @@ def test_pearson_correlacion_perfecta():
 def test_pearson_longitudes_distintas_lanza_error():
     with pytest.raises(ValueError):
         correlation.calcular_pearson([1, 2, 3], [1, 2])
+
+
+def test_pearson_incluye_r2():
+    resultado = correlation.calcular_pearson([0, 1, 2], [0, 2, 4])
+    assert np.isclose(resultado['r2'], resultado['r'] ** 2)
+
+
+# ---------------------------------------------------------------------
+# Parser de encabezados FTIR (3 filas de header: material / unidades / tiempo)
+# ---------------------------------------------------------------------
+def _construir_excel_ftir_sintetico():
+    """
+    Replica la estructura real de 'Datos Degradacion FTIR.xlsx': fila 0 =
+    material (HDL/GSH/NAC repetido por bloque de tiempo), fila 1 =
+    unidades (se ignora), fila 2 = tiempo ('0H','24H',...), fila 3 en
+    adelante = numero de onda + absorbancia.
+    """
+    filas = [
+        ['número de onda', 'HDL', 'GSH', 'HDL', 'GSH'],
+        ['cm-1', None, None, None, None],
+        ['x', '0H', '0H', '24H', '24H'],
+        [400.0, 0.1, 0.2, 0.4, 0.5],
+        [401.0, 0.3, 0.4, 0.6, 0.7],
+        [402.0, 0.2, 0.1, 0.3, 0.2],
+    ]
+    return pd.DataFrame(filas)
+
+
+def test_parsear_encabezados_ftir_construye_columnas_planas():
+    df_crudo = _construir_excel_ftir_sintetico()
+    resultado = ftir._parsear_encabezados_ftir(df_crudo)
+    assert list(resultado.columns) == ['x', 'HDL_0H', 'GSH_0H', 'HDL_24H', 'GSH_24H']
+    assert np.isclose(resultado.loc[0, 'HDL_0H'], 0.1)
+    assert np.isclose(resultado.loc[1, 'GSH_24H'], 0.7)
+    assert len(resultado) == 3
+
+
+def test_obtener_serie_ftir_extrae_material_y_tiempo_correctos():
+    df_crudo = _construir_excel_ftir_sintetico()
+    df_ftir = ftir._parsear_encabezados_ftir(df_crudo)
+    x, y = ftir.obtener_serie_ftir(df_ftir, 'HDL', 24)
+    np.testing.assert_array_almost_equal(x, [400.0, 401.0, 402.0])
+    np.testing.assert_array_almost_equal(y, [0.4, 0.6, 0.3])
+
+
+def test_obtener_serie_ftir_material_invalido_lanza_error():
+    df_crudo = _construir_excel_ftir_sintetico()
+    df_ftir = ftir._parsear_encabezados_ftir(df_crudo)
+    with pytest.raises(ValueError):
+        ftir.obtener_serie_ftir(df_ftir, 'NAC', 0)  # NAC no existe en este synthetic subset
+
+
+def test_obtener_serie_ftir_tiempo_inexistente_lanza_error():
+    df_crudo = _construir_excel_ftir_sintetico()
+    df_ftir = ftir._parsear_encabezados_ftir(df_crudo)
+    with pytest.raises(ValueError):
+        ftir.obtener_serie_ftir(df_ftir, 'HDL', 999)

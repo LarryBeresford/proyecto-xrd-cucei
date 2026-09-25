@@ -31,11 +31,12 @@ def calcular_pearson(x: np.ndarray, y: np.ndarray) -> dict:
     if len(x) != len(y):
         raise ValueError("Las series de degradación y liberación deben tener la misma longitud.")
     if len(x) < 2:
-        return {"r": np.nan, "p_value": np.nan, "n": len(x), "n_bajo": True}
+        return {"r": np.nan, "r2": np.nan, "p_value": np.nan, "n": len(x), "n_bajo": True}
 
     r, p_value = pearsonr(x, y)
     return {
         "r": float(r),
+        "r2": float(r ** 2),  # bondad de ajuste (R^2) de la regresion lineal simple
         "p_value": float(p_value),
         "n": len(x),
         "n_bajo": len(x) < 8,
