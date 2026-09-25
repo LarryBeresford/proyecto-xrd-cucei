@@ -19,10 +19,12 @@ La herramienta recibe datos experimentales de XRD y cinética, los limpia, aline
 - Normalización Min-Max opcional de difractogramas.
 - Integración numérica de picos mediante la regla compuesta de Simpson.
 - Cálculo del espaciado basal por la ley de Bragg usando radiación Cu Kα (`λ = 1.5406 Å`).
-- Cálculo disponible de FWHM como métrica de ensanchamiento/amorfización.
+- Cálculo de FWHM como métrica de ensanchamiento/amorfización, integrado como segundo índice de degradación (independiente del área de Simpson) en la app y en el reporte PDF.
 - Interpolación lineal de cinética de liberación a los tiempos cristalográficos de 0, 24, 48, 72 y 96 h.
-- Visualización interactiva de XRD, cinética y relaciones estadísticas.
+- Correlación de Pearson calculada con la degradación **real** medida en cada uno de los 5 tiempos de XRD disponibles (no una trayectoria lineal inferida), tanto vía área de Simpson como vía FWHM.
+- Visualización interactiva de XRD, evolución temporal de los índices de degradación, cinética y relaciones estadísticas.
 - Generación de reportes PDF institucionales y exportación de la tabla temporal sincronizada.
+- Núcleo de cálculo (`src/hdl_suite/`) desacoplado de la interfaz, con pruebas unitarias (`tests/`) que validan cada algoritmo contra casos de solución analítica conocida.
 
 ## Flujo de análisis
 
@@ -54,11 +56,22 @@ reports/
   figures/      # Figuras generadas por los scripts
   *.pdf         # Reportes técnicos exportados
 src/
+  hdl_suite/                   # Núcleo de cálculo compartido (sin duplicación entre scripts y app)
+    config.py                  # Rutas, constantes físicas, paleta institucional
+    data_io.py                 # Carga y limpieza del Excel de laboratorio
+    preprocessing.py           # Normalización Min-Max
+    bragg.py                   # Ley de Bragg (d-spacing)
+    crystallinity.py           # Simpson (área) y FWHM (amorfización)
+    kinetics.py                # Interpolación lineal cinética -> malla XRD
+    correlation.py             # Correlación de Pearson
+    pipeline.py                # Orquestación de las 4 etapas del análisis
   01_diagnostico.py            # Exploración inicial y reporte diagnóstico
-  02_cuantificacion_mvp.py     # Área de pico por regla de Simpson
-  03_interpolacion_cinetica.py # Sincronización temporal de la cinética
-  04_reporte_maestro.py        # Reporte ejecutivo consolidado
-  app.py                       # Aplicación web Streamlit
+  02_cuantificacion_mvp.py     # Área de pico por regla de Simpson (usa hdl_suite)
+  03_interpolacion_cinetica.py # Sincronización temporal de la cinética (usa hdl_suite)
+  04_reporte_maestro.py        # Reporte ejecutivo consolidado (usa hdl_suite)
+  app.py                       # Aplicación web Streamlit (usa hdl_suite)
+tests/
+  test_hdl_suite.py            # Pruebas unitarias contra casos de solución analítica conocida
 requirements.txt
 ```
 
@@ -95,6 +108,12 @@ python src/04_reporte_maestro.py
 
 Los scripts usan por defecto `data/raw/datos_cucei.xlsx` y escriben sus resultados en `data/processed/` y `reports/`.
 
+## Ejecutar las pruebas
+
+```powershell
+python -m pytest tests/ -v
+```
+
 ## Fundamento analítico
 
 ### Espaciado basal — ley de Bragg
@@ -115,7 +134,7 @@ La cinética medida en minutos se interpola en los tiempos de muestreo XRD. Esto
 
 ## Recomendaciones para resultados publicables
 
-- Calcular métricas XRD experimentales en **cada** tiempo disponible (0, 24, 48, 72 y 96 h); no inferir una trayectoria estructural lineal.
+- ✅ Implementado: las métricas XRD (área, FWHM, d-spacing) se calculan con datos experimentales reales en **cada** uno de los 5 tiempos disponibles (0, 24, 48, 72 y 96 h); ya no se infiere una trayectoria estructural lineal entre 0h y 96h.
 - Aplicar y documentar corrección de línea base y detección robusta de picos antes de integrar o calcular FWHM.
 - Conservar réplicas experimentales y reportar incertidumbre, intervalos de confianza y tamaño de muestra.
 - Usar Pearson solo cuando sus supuestos sean defendibles; contrastarlo con Spearman cuando corresponda.

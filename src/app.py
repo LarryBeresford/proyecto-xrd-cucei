@@ -1,272 +1,348 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from scipy.integrate import simpson
-from scipy.interpolate import interp1d
-from scipy.signal import peak_widths
-from scipy.stats import pearsonr
-from fpdf import FPDF
-from datetime import datetime
-import tempfile
+"""
+HDL Analytical Suite — Aplicación web (Streamlit)
+====================================================
+Suite de análisis estructural y cinético para matrices de Hidróxido Doble
+Laminar (HDL) usadas como vehículos de liberación controlada de fármacos
+(GSH, NAC).
+
+Este archivo es únicamente la capa de interfaz (UI). Todo el cálculo
+físico-matemático (Ley de Bragg, integración de Simpson, FWHM,
+interpolación cinética, correlación de Pearson) vive en el paquete
+`hdl_suite/`, para que la lógica científica sea auditable, testeada
+(ver tests/test_hdl_suite.py) y reutilizable desde los scripts de línea
+de comandos sin duplicación de código.
+"""
 import os
+import sys
+import tempfile
+from datetime import datetime
 
-# ==========================================
-# FUNCIONES FÍSICAS Y MATEMÁTICAS
-# ==========================================
-def calcular_distancia_bragg(angulo_2theta, longitud_onda=1.5406):
-    theta = angulo_2theta / 2.0
-    d = longitud_onda / (2 * np.sin(np.radians(theta)))
-    return d
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+from fpdf import FPDF
 
-def normalizar_senal(y):
-    if len(y) == 0 or np.max(y) == np.min(y):
-        return y
-    return (y - np.min(y)) / (np.max(y) - np.min(y))
-
-def calcular_fwhm(x, y, pico_idx):
-    try:
-        resultados = peak_widths(y, [pico_idx], rel_height=0.5)
-        ancho_indices = resultados[0][0]
-        dx = np.abs(x[1] - x[0]) 
-        return ancho_indices * dx
-    except:
-        return 0.0
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hdl_suite import config, pipeline  # noqa: E402
 
 # ==========================================
 # GENERADOR DE PDF INSTITUCIONAL CON GRÁFICOS
 # ==========================================
-C_AZUL_RGB = (0, 45, 98)
 class ReportePDF(FPDF):
     def header(self):
-        self.set_fill_color(*C_AZUL_RGB)
-        self.rect(0, 0, 210, 30, 'F')
-        self.set_y(10)
-        self.set_font('Arial', 'B', 16)
+        self.set_fill_color(*config.C_AZUL_RGB)
+        self.rect(0, 0, 210, 28, 'F')
+        self.set_fill_color(*config.C_DORADO_RGB)
+        self.rect(0, 28, 210, 2, 'F')
+        self.set_y(9)
+        self.set_font('Helvetica', 'B', 15)
         self.set_text_color(255, 255, 255)
-        self.cell(0, 10, 'REPORTE EJECUTIVO: ANALISIS HDL - CUCEI', 0, 1, 'C')
-        
+        self.cell(0, 8, 'REPORTE EJECUTIVO: SUITE ANALITICA HDL - CUCEI', 0, 1, 'C')
+
     def footer(self):
         self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
+        self.set_font('Helvetica', 'I', 8)
         self.set_text_color(128, 128, 128)
-        self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
+        self.cell(0, 10, f'Pagina {self.page_no()} | Generado {datetime.now().strftime("%Y-%m-%d %H:%M")}', 0, 0, 'C')
 
-def generar_pdf(stats, datos_cin, fig_xrd, fig_cin, fig_sca):
+    def seccion(self, titulo):
+        self.set_font('Helvetica', 'B', 13)
+        self.set_text_color(*config.C_AZUL_RGB)
+        self.cell(0, 9, titulo, 0, 1, 'L')
+        self.set_draw_color(*config.C_DORADO_RGB)
+        self.set_line_width(0.6)
+        self.line(self.get_x(), self.get_y(), 200, self.get_y())
+        self.ln(3)
+
+
+def _insertar_grafica(pdf: FPDF, fig, x=15, w=180, width=800, height=400, scale=2):
+    """
+    Renderiza una figura de Plotly a PNG (vía Kaleido/Chrome) y la inserta
+    en el PDF. Si el motor de renderizado headless falla por cualquier
+    razón del entorno (Chrome ausente o mal configurado en el servidor),
+    el reporte se sigue generando con una nota en vez de abortar por
+    completo — un PDF con texto y sin una gráfica es más útil para el
+    usuario que ningún PDF.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            fig.write_image(tmp.name, width=width, height=height, scale=scale)
+            ruta_tmp = tmp.name
+        pdf.ln(3)
+        pdf.image(ruta_tmp, x=x, w=w)
+        os.remove(ruta_tmp)
+    except Exception as e:
+        pdf.ln(3)
+        pdf.set_font('Helvetica', 'I', 9)
+        pdf.set_text_color(180, 0, 0)
+        pdf.multi_cell(0, 5, f"[Gráfica no disponible: motor de renderizado no encontrado en el servidor. Detalle: {e}]")
+        pdf.set_text_color(0, 0, 0)
+
+
+def generar_pdf(resultado, gsh_pct, nac_pct, fig_xrd, fig_cin, fig_sca_area, fig_sca_fwhm) -> bytes:
     pdf = ReportePDF()
     pdf.set_auto_page_break(auto=True, margin=15)
-    
-    # --- SECCIÓN 1: XRD ---
-    pdf.add_page()
-    pdf.set_y(40)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(*C_AZUL_RGB)
-    pdf.cell(0, 10, '1. Analisis Estructural (XRD)', 0, 1)
-    pdf.set_font('Arial', '', 11)
-    pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 7, f"Perdida de Cristalinidad: {stats['perdida']:.2f}%\n"
-                         f"Area Intacta 0h: {stats['a0']:.2f} | Area Degradada 96h: {stats['a96']:.2f}\n"
-                         f"Desplazamiento interatómico d (Bragg): {stats['delta_d']:.4f} Angstroms")
-    
-    # Guardar gráfico XRD temporalmente e insertarlo
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_xrd:
-        fig_xrd.write_image(tmp_xrd.name, width=800, height=400, scale=2)
-        pdf.ln(5)
-        pdf.image(tmp_xrd.name, x=15, w=180)
-    os.remove(tmp_xrd.name)
 
-    # --- SECCIÓN 2: CINÉTICA ---
+    # --- 1. XRD Y DEGRADACIÓN ESTRUCTURAL ---
     pdf.add_page()
-    pdf.set_y(40)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(*C_AZUL_RGB)
-    pdf.cell(0, 10, '2. Cinetica de Liberacion (Interpolada)', 0, 1)
-    pdf.set_font('Arial', 'B', 10)
+    pdf.set_y(38)
+    pdf.seccion('1. Analisis Estructural (XRD) por Tiempo')
+    pdf.set_font('Helvetica', '', 10.5)
+    pdf.set_text_color(0, 0, 0)
+    tabla_txt = "Tiempo(h) | Area Simpson | FWHM(2t) | d-spacing(A) | % Perdida Cristalinidad\n"
+    for i, t in enumerate(resultado.tiempos_h):
+        tabla_txt += (
+            f"{t:>9} | {resultado.areas[i]:>12.3f} | {resultado.fwhm[i]:>8.3f} | "
+            f"{resultado.d_spacing[i]:>12.3f} | {resultado.perdida_cristalinidad[i]:>10.2f}%\n"
+        )
+    pdf.multi_cell(0, 5.5, tabla_txt)
+    _insertar_grafica(pdf, fig_xrd)
+
+    # --- 2. CINÉTICA ---
+    pdf.add_page()
+    pdf.set_y(38)
+    pdf.seccion('2. Cinetica de Liberacion (Interpolada)')
+    pdf.set_font('Helvetica', 'B', 10)
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(40, 8, 'Hora', 1, 0, 'C', True)
     pdf.cell(70, 8, '% GSH Liberado', 1, 0, 'C', True)
     pdf.cell(70, 8, '% NAC Liberado', 1, 1, 'C', True)
-    
-    pdf.set_font('Arial', '', 10)
-    for i in range(len(datos_cin['horas'])):
-        pdf.cell(40, 8, str(datos_cin['horas'][i]), 1, 0, 'C')
-        pdf.cell(70, 8, f"{datos_cin['gsh'][i]:.2f}%", 1, 0, 'C')
-        pdf.cell(70, 8, f"{datos_cin['nac'][i]:.2f}%", 1, 1, 'C')
-        
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_cin:
-        fig_cin.write_image(tmp_cin.name, width=800, height=400, scale=2)
-        pdf.ln(5)
-        pdf.image(tmp_cin.name, x=15, w=180)
-    os.remove(tmp_cin.name)
+    pdf.set_font('Helvetica', '', 10)
+    for i in range(len(resultado.tiempos_h)):
+        pdf.cell(40, 8, str(resultado.tiempos_h[i]), 1, 0, 'C')
+        pdf.cell(70, 8, f"{gsh_pct[i]:.2f}%", 1, 0, 'C')
+        pdf.cell(70, 8, f"{nac_pct[i]:.2f}%", 1, 1, 'C')
+    _insertar_grafica(pdf, fig_cin)
 
-    # --- SECCIÓN 3: ESTADÍSTICA ---
+    # --- 3. ESTADÍSTICA ---
     pdf.add_page()
-    pdf.set_y(40)
-    pdf.set_font('Arial', 'B', 14)
-    pdf.set_text_color(*C_AZUL_RGB)
-    pdf.cell(0, 10, '3. Correlacion Estadistica (Pearson)', 0, 1)
-    pdf.set_font('Arial', '', 11)
+    pdf.set_y(38)
+    pdf.seccion('3. Correlacion Estadistica (Pearson)')
+    pdf.set_font('Helvetica', '', 11)
     pdf.set_text_color(0, 0, 0)
-    pdf.multi_cell(0, 7, f"Coeficiente r (GSH): {stats['r_gsh']:.4f} (Valor p={stats['p_gsh']:.4f})\n"
-                         f"Coeficiente r (NAC): {stats['r_nac']:.4f} (Valor p={stats['p_nac']:.4f})")
-                         
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_sca:
-        fig_sca.write_image(tmp_sca.name, width=800, height=400, scale=2)
-        pdf.ln(5)
-        pdf.image(tmp_sca.name, x=15, w=180)
-    os.remove(tmp_sca.name)
+    pdf.multi_cell(
+        0, 6.5,
+        f"Indice de Perdida de Cristalinidad (Area) vs GSH: r = {resultado.pearson_gsh_area['r']:.4f}  "
+        f"(p = {resultado.pearson_gsh_area['p_value']:.4f})\n"
+        f"Indice de Perdida de Cristalinidad (Area) vs NAC: r = {resultado.pearson_nac_area['r']:.4f}  "
+        f"(p = {resultado.pearson_nac_area['p_value']:.4f})\n"
+        f"Indice de Amorfizacion (FWHM) vs GSH: r = {resultado.pearson_gsh_fwhm['r']:.4f}  "
+        f"(p = {resultado.pearson_gsh_fwhm['p_value']:.4f})\n"
+        f"Indice de Amorfizacion (FWHM) vs NAC: r = {resultado.pearson_nac_fwhm['r']:.4f}  "
+        f"(p = {resultado.pearson_nac_fwhm['p_value']:.4f})\n\n"
+        f"Nota metodologica: n = {resultado.pearson_gsh_area['n']} puntos de tiempo. Con una muestra de "
+        "este tamano el poder estadistico es limitado; un p-value < 0.05 se interpreta como evidencia "
+        "cuantitativa que reemplaza la inspeccion visual subjetiva, no como prueba estadistica robusta "
+        "en el sentido clasico. Se recomienda aumentar la densidad de muestreo XRD en trabajo futuro."
+    )
+    _insertar_grafica(pdf, fig_sca_area)
 
     return pdf.output(dest='S').encode('latin-1')
 
-# ==========================================
-# INTERFAZ WEB (STREAMLIT)
-# ==========================================
-st.set_page_config(page_title="Suite XRD & Cinética", layout="wide", page_icon="🔬")
 
-col_logo, col_text = st.columns([1, 8])
-with col_text:
-    st.title("Suite Analítica: Degradación Estructural y Liberación")
-    st.markdown("**Universidad de Guadalajara | CUCEI - Laboratorio de Fisicoquímica**")
-st.markdown("---")
+# ==========================================
+# ESTILOS / DISEÑO
+# ==========================================
+st.set_page_config(page_title="HDL Analytical Suite", layout="wide", page_icon="🔬")
+
+st.markdown(f"""
+<style>
+    .main {{ background-color: #FAFBFC; }}
+    .block-container {{ padding-top: 1.5rem; }}
+    div[data-testid="stMetric"] {{
+        background-color: white;
+        border: 1px solid #E5E9F0;
+        border-left: 4px solid {config.C_AZUL};
+        border-radius: 10px;
+        padding: 14px 16px 8px 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }}
+    div[data-testid="stMetricLabel"] {{ color: #555; font-weight: 600; }}
+    .suite-banner {{
+        background: linear-gradient(90deg, {config.C_AZUL} 0%, #01419b 100%);
+        padding: 22px 28px;
+        border-radius: 12px;
+        color: white;
+        margin-bottom: 6px;
+    }}
+    .suite-banner h1 {{ margin: 0; font-size: 1.6rem; }}
+    .suite-banner p {{ margin: 4px 0 0 0; color: {config.C_DORADO}; font-weight: 600; }}
+    .stTabs [data-baseweb="tab"] {{ font-weight: 600; }}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class="suite-banner">
+    <h1>🔬 HDL Analytical Suite</h1>
+    <p>Universidad de Guadalajara · CUCEI — Laboratorio de Fisicoquímica</p>
+</div>
+""", unsafe_allow_html=True)
+st.caption(
+    "Cuantificación automatizada de degradación estructural (XRD) y su correlación estadística con la "
+    "cinética de liberación de fármaco, eliminando la inspección visual subjetiva."
+)
 
 # --- BARRA LATERAL ---
-st.sidebar.header("⚙️ Parámetros de XRD")
-limite_inf = st.sidebar.slider("Límite Inferior (Ángulo 2θ)", 2.0, 25.0, 8.0, 0.1)
-limite_sup = st.sidebar.slider("Límite Superior (Ángulo 2θ)", 5.0, 35.0, 15.0, 0.1)
-usar_normalizacion = st.sidebar.checkbox("Normalizar difractogramas", value=True)
+st.sidebar.header("⚙️ Parámetros de Análisis")
+limite_inf = st.sidebar.slider("Límite Inferior (2θ)", 2.0, 25.0, config.LIMITE_INF_DEFAULT, 0.1)
+limite_sup = st.sidebar.slider("Límite Superior (2θ)", 5.0, 35.0, config.LIMITE_SUP_DEFAULT, 0.1)
+usar_normalizacion = st.sidebar.checkbox("Normalizar diffractogramas (Min-Max)", value=True)
+st.sidebar.caption(
+    "El pico basal del HDL se ubica típicamente entre 8°-15° (2θ). Ajusta la ventana si tu material "
+    "tiene el plano basal en otra región angular."
+)
 
-archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra)", type=["xlsx"])
+archivo_subido = st.file_uploader("📂 Suba su archivo Excel (Plantilla Maestra: hojas 'XRD diferentes tiempos' y 'Cinetica')", type=["xlsx"])
 
 if archivo_subido is not None:
     try:
-        with st.spinner('Procesando datos y generando reporte...'):
-            # --- 1. LECTURA Y EXTRACCIÓN QUIRÚRGICA XRD ---
-            df_xrd = pd.read_excel(archivo_subido, sheet_name='XRD diferentes tiempos')
-            
-            df_0h = df_xrd.iloc[:, [0, 1]].copy()
-            df_0h.columns = ['Angulo', 'Intensidad']
-            df_96h = df_xrd.iloc[:, [4, 8]].copy()
-            df_96h.columns = ['Angulo', 'Intensidad']
-            
-            df_0h = df_0h.apply(pd.to_numeric, errors='coerce').dropna()
-            df_96h = df_96h.apply(pd.to_numeric, errors='coerce').dropna()
-                
-            mask_0h = (df_0h['Angulo'] >= limite_inf) & (df_0h['Angulo'] <= limite_sup)
-            x_0h = df_0h.loc[mask_0h, 'Angulo'].values
-            y_0h = df_0h.loc[mask_0h, 'Intensidad'].values
-
-            mask_96h = (df_96h['Angulo'] >= limite_inf) & (df_96h['Angulo'] <= limite_sup)
-            x_96h = df_96h.loc[mask_96h, 'Angulo'].values
-            y_96h = df_96h.loc[mask_96h, 'Intensidad'].values
-
-            if len(x_0h) == 0 or len(x_96h) == 0:
-                st.warning(f"⚠️ ¡Atención! No se encontraron datos entre los ángulos {limite_inf}° y {limite_sup}°. Mueva los deslizadores para atrapar el pico.")
-                st.stop()
-
-            if usar_normalizacion:
-                y_0h = normalizar_senal(y_0h)
-                y_96h = normalizar_senal(y_96h)
-
-            area_0h = simpson(y=y_0h, x=x_0h)
-            area_96h = simpson(y=y_96h, x=x_96h)
-            perdida_porcentaje = ((area_0h - area_96h) / area_0h) * 100
-
-            idx_0h, idx_96h = np.argmax(y_0h), np.argmax(y_96h)
-            pico_x_0h, pico_x_96h = x_0h[idx_0h], x_96h[idx_96h]
-            dist_0h = calcular_distancia_bragg(pico_x_0h)
-            dist_96h = calcular_distancia_bragg(pico_x_96h)
-
-            # --- 2. LECTURA CINÉTICA ---
-            df_cin = pd.read_excel(archivo_subido, sheet_name='Cinetica', skiprows=1)
-            df_cin = df_cin.iloc[:, :3].copy()
-            df_cin.columns = ['Tiempo', 'GSH', 'NAC']
-            df_cin = df_cin.apply(pd.to_numeric, errors='coerce').dropna(subset=['Tiempo', 'GSH', 'NAC'])
-
-            horas_objetivo = np.array([0, 24, 48, 72, 96])
-            minutos_objetivo = horas_objetivo * 60
-            
-            f_gsh = interp1d(df_cin['Tiempo'], df_cin['GSH'], kind='linear', fill_value="extrapolate")
-            f_nac = interp1d(df_cin['Tiempo'], df_cin['NAC'], kind='linear', fill_value="extrapolate")
-            
-            gsh_interp = np.clip(f_gsh(minutos_objetivo), 0, 100)
-            nac_interp = np.clip(f_nac(minutos_objetivo), 0, 100)
-
-            # --- 3. ESTADÍSTICA (PEARSON) ---
-            degradacion_teorica = np.linspace(0, perdida_porcentaje, 5) 
-            r_gsh, p_val_gsh = pearsonr(degradacion_teorica, gsh_interp)
-            r_nac, p_val_nac = pearsonr(degradacion_teorica, nac_interp)
-
-            # ==========================================
-            # CREACIÓN DE GRÁFICOS EN MEMORIA
-            # ==========================================
-            # Gráfico 1: XRD
-            fig_xrd = go.Figure()
-            fig_xrd.add_trace(go.Scatter(x=x_0h, y=y_0h, fill='tozeroy', mode='lines', name='Intacto (0h)', line=dict(color='#002D62', width=2.5)))
-            fig_xrd.add_trace(go.Scatter(x=x_96h, y=y_96h, fill='tozeroy', mode='lines', name='Degradado (96h)', line=dict(color='#F0A800', width=2.5)))
-            fig_xrd.add_annotation(x=pico_x_0h, y=y_0h[idx_0h], text=f"Máx 0h: {pico_x_0h:.2f}°", showarrow=True, arrowhead=2, arrowsize=1, arrowcolor="#002D62", ax=-40, ay=-40)
-            fig_xrd.add_annotation(x=pico_x_96h, y=y_96h[idx_96h], text=f"Máx 96h: {pico_x_96h:.2f}°", showarrow=True, arrowhead=2, arrowsize=1, arrowcolor="#B77900", ax=40, ay=-40)
-            fig_xrd.update_layout(xaxis_title='Ángulo 2θ', yaxis_title='Intensidad', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30))
-
-            # Gráfico 2: Cinética
-            fig_cin = go.Figure()
-            fig_cin.add_trace(go.Scatter(x=df_cin['Tiempo'], y=df_cin['GSH'], mode='lines', name='GSH (Crudo)', line=dict(color='rgba(0, 45, 98, 0.3)', dash='dot', width=3)))
-            fig_cin.add_trace(go.Scatter(x=df_cin['Tiempo'], y=df_cin['NAC'], mode='lines', name='NAC (Crudo)', line=dict(color='rgba(240, 168, 0, 0.3)', dash='dot', width=3)))
-            fig_cin.add_trace(go.Scatter(x=minutos_objetivo, y=gsh_interp, mode='markers+lines', name='GSH (24h)', marker=dict(color='#002D62', size=12, symbol='diamond')))
-            fig_cin.add_trace(go.Scatter(x=minutos_objetivo, y=nac_interp, mode='markers+lines', name='NAC (24h)', marker=dict(color='#F0A800', size=12, symbol='diamond')))
-            fig_cin.update_layout(xaxis_title='Tiempo (Minutos)', yaxis_title='% Liberado', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30))
-
-            # Gráfico 3: Dispersión
-            fig_sca = go.Figure()
-            fig_sca.add_trace(go.Scatter(x=degradacion_teorica, y=gsh_interp, mode='markers+lines', name='GSH', marker=dict(size=14, color='#002D62')))
-            fig_sca.add_trace(go.Scatter(x=degradacion_teorica, y=nac_interp, mode='markers+lines', name='NAC', marker=dict(size=14, color='#F0A800')))
-            fig_sca.update_layout(xaxis_title='Pérdida de Estructura (%)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30))
-
-            # --- 4. BOTÓN DESCARGA PDF ---
-            stats_dict = {'perdida': perdida_porcentaje, 'a0': area_0h, 'a96': area_96h, 'delta_d': dist_96h - dist_0h, 'r_gsh': r_gsh, 'p_gsh': p_val_gsh, 'r_nac': r_nac, 'p_nac': p_val_nac}
-            cin_dict = {'horas': horas_objetivo, 'gsh': gsh_interp, 'nac': nac_interp}
-            
-            # Generar el PDF inyectando las gráficas que acabamos de crear
-            pdf_bytes = generar_pdf(stats_dict, cin_dict, fig_xrd, fig_cin, fig_sca)
-            st.sidebar.markdown("---")
-            st.sidebar.download_button(
-                label="📥 Descargar Reporte Ejecutivo Visual (PDF)",
-                data=pdf_bytes,
-                file_name=f"Reporte_Visual_CUCEI_{datetime.now().strftime('%Y%m%d')}.pdf",
-                mime="application/pdf"
+        with st.spinner('Ejecutando pipeline: normalización → Bragg/FWHM/Simpson → interpolación → Pearson...'):
+            resultado = pipeline.ejecutar_pipeline(
+                ruta_excel=archivo_subido,
+                limite_inf=limite_inf,
+                limite_sup=limite_sup,
+                normalizar=usar_normalizacion,
             )
 
-        # --- 5. INTERFAZ VISUAL ---
-        t1, t2, t3, t4 = st.tabs(["Cristalografía (XRD)", "Cinética de Liberación", "Correlación Estadística", "Datos Crudos"])
+            if all(len(x) == 0 for x, _ in resultado.series_xrd.values()):
+                st.warning(f"⚠️ No se encontraron datos entre {limite_inf}° y {limite_sup}°. Ajusta los sliders.")
+                st.stop()
+
+            df_cin = resultado.df_cinetica_interpolada
+            gsh_pct = df_cin['Liberacion_GSH_Porcentaje'].to_numpy()
+            nac_pct = df_cin['Liberacion_NAC_Porcentaje'].to_numpy()
+
+            # ==========================================
+            # GRÁFICOS
+            # ==========================================
+            # 1. XRD overlay (0h vs 96h, resaltando los extremos)
+            fig_xrd = go.Figure()
+            paleta_tiempos = ['#002D62', '#3D6CB9', '#8AA9D6', '#F0A800', '#B77900']
+            for i, t in enumerate(resultado.tiempos_h):
+                x_t, y_t = resultado.series_xrd[t]
+                if len(x_t) == 0:
+                    continue
+                color = paleta_tiempos[i % len(paleta_tiempos)]
+                fig_xrd.add_trace(go.Scatter(
+                    x=x_t, y=y_t, mode='lines', name=f'HDL {t}H',
+                    line=dict(color=color, width=2.5),
+                    fill='tozeroy' if t in (0, resultado.tiempos_h[-1]) else None,
+                    opacity=1.0 if t in (0, resultado.tiempos_h[-1]) else 0.55,
+                ))
+            fig_xrd.update_layout(
+                xaxis_title='Ángulo 2θ', yaxis_title='Intensidad (normalizada)' if usar_normalizacion else 'Intensidad',
+                template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=500,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+
+            # 2. Índices de degradación vs tiempo (área y FWHM)
+            fig_degradacion = go.Figure()
+            fig_degradacion.add_trace(go.Scatter(
+                x=resultado.tiempos_h, y=resultado.perdida_cristalinidad, mode='lines+markers',
+                name='% Pérdida de Cristalinidad (Área)', line=dict(color=config.C_AZUL, width=3), marker=dict(size=10),
+            ))
+            fig_degradacion.add_trace(go.Scatter(
+                x=resultado.tiempos_h, y=resultado.fwhm, mode='lines+markers', name='FWHM (Amorfización)',
+                yaxis='y2', line=dict(color=config.C_DORADO, width=3, dash='dot'), marker=dict(size=10, symbol='diamond'),
+            ))
+            fig_degradacion.update_layout(
+                xaxis_title='Tiempo (horas)', yaxis_title='% Pérdida de Cristalinidad',
+                yaxis2=dict(title='FWHM (°2θ)', overlaying='y', side='right'),
+                template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=450,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+
+            # 3. Cinética
+            fig_cin = go.Figure()
+            fig_cin.add_trace(go.Scatter(x=resultado.tiempos_h, y=gsh_pct, mode='markers+lines', name='GSH', marker=dict(color=config.C_AZUL, size=12, symbol='diamond')))
+            fig_cin.add_trace(go.Scatter(x=resultado.tiempos_h, y=nac_pct, mode='markers+lines', name='NAC', marker=dict(color=config.C_DORADO, size=12, symbol='diamond')))
+            fig_cin.update_layout(xaxis_title='Tiempo (horas)', yaxis_title='% Liberado', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=450)
+
+            # 4. Dispersión / correlación (área)
+            fig_sca_area = go.Figure()
+            fig_sca_area.add_trace(go.Scatter(x=resultado.perdida_cristalinidad, y=gsh_pct, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
+            fig_sca_area.add_trace(go.Scatter(x=resultado.perdida_cristalinidad, y=nac_pct, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
+            fig_sca_area.update_layout(xaxis_title='% Pérdida de Cristalinidad (real, por tiempo)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=480)
+
+            # 5. Dispersión / correlación (FWHM)
+            fig_sca_fwhm = go.Figure()
+            fig_sca_fwhm.add_trace(go.Scatter(x=resultado.fwhm, y=gsh_pct, mode='markers+text', name='GSH', marker=dict(size=14, color=config.C_AZUL), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
+            fig_sca_fwhm.add_trace(go.Scatter(x=resultado.fwhm, y=nac_pct, mode='markers+text', name='NAC', marker=dict(size=14, color=config.C_DORADO), text=[f"{t}h" for t in resultado.tiempos_h], textposition="top center"))
+            fig_sca_fwhm.update_layout(xaxis_title='FWHM del pico basal (°2θ)', yaxis_title='Fármaco Liberado (%)', template="plotly_white", margin=dict(t=30, b=30, l=30, r=30), height=480)
+
+            # --- BOTÓN DESCARGA PDF ---
+            pdf_bytes = generar_pdf(resultado, gsh_pct, nac_pct, fig_xrd, fig_cin, fig_sca_area, fig_sca_fwhm)
+            st.sidebar.markdown("---")
+            st.sidebar.download_button(
+                label="📥 Descargar Reporte Ejecutivo (PDF)",
+                data=pdf_bytes,
+                file_name=f"Reporte_HDL_Suite_{datetime.now().strftime('%Y%m%d')}.pdf",
+                mime="application/pdf",
+            )
+
+        # ==========================================
+        # INTERFAZ VISUAL
+        # ==========================================
+        t1, t2, t3, t4 = st.tabs(["🧪 Cristalografía (XRD)", "💧 Cinética de Liberación", "📈 Correlación Estadística", "📄 Datos"])
 
         with t1:
             st.markdown("### Métricas Estructurales del Vehículo (HDL)")
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Área Intacta (0h)", f"{area_0h:.2f}")
-            c2.metric("Área Degradada (96h)", f"{area_96h:.2f}")
-            c3.metric("Pérdida Cristalinidad", f"{perdida_porcentaje:.2f}%", delta="- Degradación", delta_color="inverse")
-            c4.metric("Colapso Capas (Δd)", f"{(dist_96h - dist_0h):.4f} Å", delta="Reducción interlaminar", delta_color="inverse")
-            
-            # Volver a poner el slider abajo en web
-            fig_xrd.update_layout(height=550, hovermode="x unified", xaxis=dict(rangeslider=dict(visible=True), type="-"))
+            c1.metric("Pérdida Cristalinidad (96h)", f"{resultado.perdida_cristalinidad[-1]:.2f}%", delta="vs 0h", delta_color="inverse")
+            c2.metric("FWHM inicial → final", f"{resultado.fwhm[0]:.3f}° → {resultado.fwhm[-1]:.3f}°")
+            c3.metric("d-spacing (0h)", f"{resultado.d_spacing[0]:.4f} Å")
+            c4.metric("d-spacing (96h)", f"{resultado.d_spacing[-1]:.4f} Å", delta=f"{resultado.d_spacing[-1]-resultado.d_spacing[0]:+.4f} Å", delta_color="inverse")
             st.plotly_chart(fig_xrd, use_container_width=True)
+            st.markdown("#### Evolución de los Índices de Degradación (5 tiempos reales de XRD)")
+            st.plotly_chart(fig_degradacion, use_container_width=True)
 
         with t2:
             st.markdown("### Perfil de Liberación Interpolado (GSH vs NAC)")
-            fig_cin.update_layout(height=500, hovermode="x unified", legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
             st.plotly_chart(fig_cin, use_container_width=True)
 
         with t3:
-            st.markdown("### Análisis de Correlación: Desgaste vs Liberación")
-            c_stat1, c_stat2 = st.columns(2)
-            c_stat1.metric("Correlación Pearson (GSH)", f"r = {r_gsh:.4f}", f"Valor p: {p_val_gsh:.4f}")
-            c_stat2.metric("Correlación Pearson (NAC)", f"r = {r_nac:.4f}", f"Valor p: {p_val_nac:.4f}")
-
-            fig_sca.update_layout(height=500, xaxis=dict(showgrid=True, gridwidth=1, gridcolor='LightPink'), yaxis=dict(showgrid=True, gridwidth=1, gridcolor='LightBlue'))
-            st.plotly_chart(fig_sca, use_container_width=True)
+            st.markdown("### Correlación: Degradación Estructural Real vs Liberación de Fármaco")
+            st.info(
+                f"n = {resultado.pearson_gsh_area['n']} tiempos de medición real. Con muestras pequeñas el "
+                "poder estadístico es limitado — estos resultados se presentan como evidencia cuantitativa, "
+                "no como prueba estadística robusta en sentido clásico.",
+                icon="ℹ️",
+            )
+            cA, cB = st.columns(2)
+            with cA:
+                st.markdown("**Índice: % Pérdida de Cristalinidad (Área de Simpson)**")
+                cs1, cs2 = st.columns(2)
+                cs1.metric("Pearson r (GSH)", f"{resultado.pearson_gsh_area['r']:.4f}", f"p = {resultado.pearson_gsh_area['p_value']:.4f}")
+                cs2.metric("Pearson r (NAC)", f"{resultado.pearson_nac_area['r']:.4f}", f"p = {resultado.pearson_nac_area['p_value']:.4f}")
+                st.plotly_chart(fig_sca_area, use_container_width=True)
+            with cB:
+                st.markdown("**Índice: FWHM (Amorfización)**")
+                cs3, cs4 = st.columns(2)
+                cs3.metric("Pearson r (GSH)", f"{resultado.pearson_gsh_fwhm['r']:.4f}", f"p = {resultado.pearson_gsh_fwhm['p_value']:.4f}")
+                cs4.metric("Pearson r (NAC)", f"{resultado.pearson_nac_fwhm['r']:.4f}", f"p = {resultado.pearson_nac_fwhm['p_value']:.4f}")
+                st.plotly_chart(fig_sca_fwhm, use_container_width=True)
 
         with t4:
-            st.markdown("### Previsualización de Datos Extraídos")
-            st.dataframe(df_xrd.head(20), use_container_width=True)
+            st.markdown("### Tabla Maestra (5 tiempos reales de XRD sincronizados con cinética)")
+            df_maestra = pd.DataFrame({
+                'Tiempo (h)': resultado.tiempos_h,
+                'Área Simpson': np.round(resultado.areas, 4),
+                'FWHM (°2θ)': np.round(resultado.fwhm, 4),
+                'd-spacing (Å)': np.round(resultado.d_spacing, 4),
+                '% Pérdida Cristalinidad': np.round(resultado.perdida_cristalinidad, 2),
+                '% GSH Liberado': gsh_pct,
+                '% NAC Liberado': nac_pct,
+            })
+            st.dataframe(df_maestra, use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 Descargar tabla maestra (CSV)",
+                data=df_maestra.to_csv(index=False).encode('utf-8'),
+                file_name="tabla_maestra_hdl.csv",
+                mime="text/csv",
+            )
 
     except Exception as e:
-        st.error(f"Error procesando los datos o instalando dependencias de imagen. Asegúrate de instalar 'kaleido'. Detalles técnicos: {e}")
+        st.error(f"Error procesando los datos. Verifica el formato del Excel o que 'kaleido' esté instalado. Detalle técnico: {e}")
+else:
+    st.info("⬆️ Sube el archivo Excel maestro para ejecutar el análisis completo.", icon="📄")

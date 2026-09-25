@@ -4,6 +4,7 @@ numpy
 scipy
 plotly
 matplotlib
-fpdf
+fpdf2
 openpyxl
 kaleido
+pytest

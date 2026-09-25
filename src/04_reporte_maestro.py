@@ -1,17 +1,21 @@
 import os
+import sys
 import pandas as pd
 from fpdf import FPDF
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hdl_suite import config as hdl_config, pipeline  # noqa: E402
+
 # --- 1. CONFIGURACIÓN DE RUTAS ---
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DIR_FIGURAS = os.path.join(BASE_DIR, 'reports', 'figures')
-DIR_REPORTES = os.path.join(BASE_DIR, 'reports')
-RUTA_CSV = os.path.join(BASE_DIR, 'data', 'processed', 'tabla_unificada.csv')
+BASE_DIR = hdl_config.BASE_DIR
+DIR_FIGURAS = hdl_config.DIR_FIGURAS
+DIR_REPORTES = hdl_config.DIR_REPORTES
+RUTA_CSV = os.path.join(hdl_config.DIR_PROCESSED, 'tabla_unificada.csv')
 
 # --- 2. COLORES UDEG / CUCEI ---
-C_AZUL_RGB = (0, 45, 98)
-C_DORADO_RGB = (240, 168, 0)
+C_AZUL_RGB = hdl_config.C_AZUL_RGB
+C_DORADO_RGB = hdl_config.C_DORADO_RGB
 
 # --- 3. CLASE DEL REPORTE MAESTRO ---
 class ReporteMaestro(FPDF):
@@ -77,6 +81,16 @@ class ReporteMaestro(FPDF):
 
 # --- 4. CONSTRUCCIÓN DEL DOCUMENTO ---
 def generar_documento():
+    # Cálculo dinámico real (ya no un porcentaje escrito a mano en el texto):
+    # se ejecuta el pipeline completo sobre los 5 tiempos reales de XRD y se
+    # usa la degradación real (no una cifra fija) para redactar el reporte.
+    resultado = pipeline.ejecutar_pipeline(tiempos_h=hdl_config.TIEMPOS_XRD_HORAS, normalizar=False)
+    perdida_96h = resultado.perdida_cristalinidad[-1]
+    r_gsh = resultado.pearson_gsh_area['r']
+    p_gsh = resultado.pearson_gsh_area['p_value']
+    r_nac = resultado.pearson_nac_area['r']
+    p_nac = resultado.pearson_nac_area['p_value']
+
     pdf = ReporteMaestro()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.portada()
@@ -100,7 +114,7 @@ def generar_documento():
     if os.path.exists(ruta_mvp):
         pdf.image(ruta_mvp, x=15, w=180)
     pdf.parrafo("En ciencia, no basta con decir que 'se ve aplastado'. Al programar un algoritmo de integración matemática (Regla de Simpson) sobre el pico principal del material, logramos calcular el Área Bajo la Curva exacta.")
-    pdf.parrafo("El resultado es irrefutable: la matriz inorgánica perdió exactamente un 5.9% de su estructura cristalina en ese plano durante las primeras 96 horas. Hemos transformado una observación visual en un Índice de Degradación medible.")
+    pdf.parrafo(f"El resultado es irrefutable: la matriz inorgánica perdió exactamente un {perdida_96h:.1f}% de su estructura cristalina en ese plano durante las primeras 96 horas. Hemos transformado una observación visual en un Índice de Degradación medible.")
 
     # --- PÁGINA 4: INTERPOLACIÓN ---
     pdf.add_page()
@@ -126,9 +140,17 @@ def generar_documento():
             pdf.cell(50, 8, f"{row['Liberacion_NAC_Porcentaje']}%", border=1, align='C')
             pdf.ln()
     
+    # --- PÁGINA 5: CORRELACIÓN REAL (ya no es "siguiente paso", ya está calculada) ---
+    pdf.add_page()
+    pdf.seccion_titulo('5. La Correlación Estadística (Pearson)')
+    pdf.parrafo("Con la degradación estructural real medida en cada uno de los 5 tiempos de XRD (0, 24, 48, 72 y 96 horas) y la liberación de fármaco interpolada en esos mismos instantes, se calculó el coeficiente de correlación de Pearson entre ambas variables.")
+    pdf.parrafo(f"Correlación (Pérdida de Cristalinidad vs. % GSH liberado): r = {r_gsh:.4f}  (p = {p_gsh:.4f})")
+    pdf.parrafo(f"Correlación (Pérdida de Cristalinidad vs. % NAC liberado): r = {r_nac:.4f}  (p = {p_nac:.4f})")
+    pdf.parrafo("Nota metodológica: con n=5 puntos de tiempo el poder estadístico de la prueba es limitado. Estos valores se presentan como evidencia cuantitativa que reemplaza la inspección visual subjetiva, no como una prueba estadística robusta en sentido clásico; se recomienda como trabajo futuro aumentar la densidad de muestreo XRD.")
+
     pdf.ln(5)
     pdf.seccion_titulo('Conclusión Ejecutiva')
-    pdf.parrafo("Tenemos ahora todas las piezas sobre la mesa. Sabemos exactamente cuánto se destruyó el material (5.9%) y, gracias a la interpolación, sabemos exactamente cuánto fármaco salió en ese mismo periodo de 96 horas. El siguiente paso del proyecto será cruzar estas dos variables para encontrar el nivel de correlación estadística entre la destrucción del vehículo y la liberación del pasajero.")
+    pdf.parrafo(f"Tenemos ahora todas las piezas sobre la mesa. Sabemos exactamente cuánto se destruyó el material ({perdida_96h:.1f}% a las 96h) y, gracias a la interpolación, sabemos exactamente cuánto fármaco salió en ese mismo periodo. Al cruzar ambas variables con Pearson, obtenemos evidencia cuantitativa del nivel de asociación entre la destrucción del vehículo y la liberación del pasajero, reemplazando por completo la inspección visual subjetiva con la que inició este proyecto.")
 
     ruta_salida = os.path.join(DIR_REPORTES, 'Reporte_04_Maestro.pdf')
     pdf.output(ruta_salida)
