@@ -32,6 +32,29 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hdl_suite import config, pipeline  # noqa: E402
 
 PALETA_TIEMPOS = ['#002D62', '#3D6CB9', '#8AA9D6', '#F0A800', '#B77900']
+
+# Los fuentes core de FPDF (Helvetica) solo soportan Latin-1. Streamlit/la UI
+# web sí soportan UTF-8 completo (emojis, guiones largos, etc.), pero ese
+# mismo texto reventaba el PDF si se reutilizaba tal cual (p.ej. el guion
+# largo "—" no existe en Latin-1). Esta función normaliza cualquier texto
+# antes de mandarlo a FPDF, sustituyendo la puntuación tipográfica más común
+# por su equivalente ASCII y, como último recurso, descartando cualquier
+# caracter que Latin-1 no pueda representar en vez de tronar la app.
+_PDF_REPLACEMENTS = {
+    "—": "-",   # em dash —
+    "–": "-",   # en dash –
+    "…": "...",  # ellipsis …
+    "‘": "'", "’": "'",  # comillas simples tipográficas
+    "“": '"', "”": '"',  # comillas dobles tipográficas
+    "•": "-",   # bullet •
+    "−": "-",   # signo menos matemático −
+}
+
+
+def _pdf_safe(texto: str) -> str:
+    for original, reemplazo in _PDF_REPLACEMENTS.items():
+        texto = texto.replace(original, reemplazo)
+    return texto.encode('latin-1', errors='replace').decode('latin-1')
 NOTA_METODOLOGICA_N_BAJO = (
     "Con muestras de este tamaño (n=5 tiempos reales) el poder estadístico es limitado. "
     "Un p-value < 0.05 se interpreta aquí como evidencia cuantitativa que reemplaza la inspección "
@@ -62,7 +85,7 @@ class ReportePDF(FPDF):
     def seccion(self, titulo):
         self.set_font('Helvetica', 'B', 13)
         self.set_text_color(*config.C_AZUL_RGB)
-        self.cell(0, 9, titulo, 0, 1, 'L')
+        self.cell(0, 9, _pdf_safe(titulo), 0, 1, 'L')
         self.set_draw_color(*config.C_DORADO_RGB)
         self.set_line_width(0.6)
         self.line(self.get_x(), self.get_y(), 200, self.get_y())
@@ -186,7 +209,11 @@ def generar_pdf(xrd_ctx: Optional[dict], ftir_ctx: Optional[dict]) -> bytes:
         )
         _insertar_grafica(pdf, ftir_ctx['fig_sca_area'])
 
-    return pdf.output(dest='S').encode('latin-1')
+    # fpdf2 >= 2.2 devuelve bytearray directamente desde output() (el
+    # parametro dest='S' esta deprecado y en versiones recientes ya no
+    # devuelve un str que haya que codificar). bytes(...) normaliza el
+    # bytearray a bytes, que es lo que espera st.download_button.
+    return bytes(pdf.output())
 
 
 # ==========================================

@@ -20,12 +20,45 @@ HOJA_XRD = 'XRD diferentes tiempos'
 HOJA_CINETICA = 'Cinetica'
 
 
+def _resolver_nombre_hoja(ruta_excel, nombre_esperado: str) -> str:
+    """
+    Encuentra el nombre real de una hoja dentro del Excel, tolerando
+    mayúsculas/minúsculas y espacios extra al inicio/final (variaciones
+    comunes cuando el archivo se reexporta desde distinto software).
+
+    Si no se encuentra ninguna coincidencia razonable, lanza un error que
+    lista las hojas realmente presentes en el archivo -- la causa más
+    frecuente es haber subido el archivo equivocado (p.ej. el Excel de
+    FTIR en el uploader de XRD, o viceversa), y ese mensaje debe dejarlo
+    claro de inmediato en vez de mostrar un KeyError críptico.
+    """
+    xls = pd.ExcelFile(ruta_excel)
+    hojas_disponibles = xls.sheet_names
+
+    if nombre_esperado in hojas_disponibles:
+        return nombre_esperado
+
+    objetivo = nombre_esperado.strip().lower()
+    for hoja in hojas_disponibles:
+        if hoja.strip().lower() == objetivo:
+            return hoja
+
+    raise ValueError(
+        f"No se encontró la hoja '{nombre_esperado}' en el archivo subido. "
+        f"Hojas disponibles en este Excel: {hojas_disponibles}. "
+        "Verifica que estás subiendo el archivo correcto en esta pestaña "
+        "(el Excel de XRD+Cinética y el Excel de espectros FTIR son archivos "
+        "distintos y no son intercambiables)."
+    )
+
+
 def cargar_xrd_crudo(ruta_excel: str = config.ARCHIVO_EXCEL_DEFAULT) -> pd.DataFrame:
     """
     Carga la hoja de XRD y fuerza todas las columnas a numérico,
     convirtiendo marcadores de error ('--', texto, celdas vacías) en NaN.
     """
-    df = pd.read_excel(ruta_excel, sheet_name=HOJA_XRD)
+    hoja_real = _resolver_nombre_hoja(ruta_excel, HOJA_XRD)
+    df = pd.read_excel(ruta_excel, sheet_name=hoja_real)
     for col in df.columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
@@ -37,7 +70,8 @@ def cargar_cinetica_cruda(ruta_excel: str = config.ARCHIVO_EXCEL_DEFAULT) -> pd.
     estándar (Tiempo, Liberacion_GSH, Liberacion_NAC) y descarta filas de
     encabezado/unidades que no son datos numéricos reales.
     """
-    df = pd.read_excel(ruta_excel, sheet_name=HOJA_CINETICA, skiprows=1)
+    hoja_real = _resolver_nombre_hoja(ruta_excel, HOJA_CINETICA)
+    df = pd.read_excel(ruta_excel, sheet_name=hoja_real, skiprows=1)
     df = df.rename(columns={
         'Unnamed: 0': 'Tiempo',
         'GSH': 'Liberacion_GSH',
